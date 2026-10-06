@@ -16,6 +16,7 @@ const allowedOrigins = [
   "http://127.0.0.1:5175",
   "https://dms-one.netlify.app/",
   "https://dms-one.netlify.app",
+  "https://dms.itsoftlab360.com",
   "http://dms-frontend-lb-179175988.ap-south-1.elb.amazonaws.com"
 ];
 

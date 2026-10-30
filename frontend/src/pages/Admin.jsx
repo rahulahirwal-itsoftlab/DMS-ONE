@@ -89,7 +89,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     const [data, setData] = useState({});
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState("");
-    const [dealerForm, setDealerForm] = useState({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", state: "", city: "", pincode: "", address: "" });
+    const [dealerForm, setDealerForm] = useState({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", state: "", city: "", pincode: "", address: "", allocatedLicenses: 1 });
     const [showDealerPassword, setShowDealerPassword] = useState(false);
     const [showDealerConfirmPassword, setShowDealerConfirmPassword] = useState(false);
     const [productForm, setProductForm] = useState({ productName: "", category: "", description: "", manufacturingDate: "", expiryDate: "", price: 0, quantity: 0, lowStockLimit: 10, creditCoins: 0, status: "active" });
@@ -119,7 +119,7 @@ import { formatTitleCase } from "../utils/textFormatter";
       setLoading(true);
       setLoadError("");
       const endpointByTab = {
-        dashboard: ["dashboard", "dashboard/analytics"], dealers: ["dealers"], dealerPerformance: ["dealer-performance", "products"],
+        dashboard: ["dashboard", "dashboard/analytics"], licenseUpgrade: ["license-status"], dealers: ["dealers"], dealerPerformance: ["dealer-performance", "products"],
         products: ["products", "stock/dealers"], inventory: ["products", "stock/dealers"], orders: ["orders"], delivery: ["orders"],
         finance: ["finance/approved-orders", "finance/payments", "dealers"], creditManagement: ["credit/summary", "credit/rewards", "credit/redemptions", "credit/dealer-wallets"],
         dealerSales: ["dealer-sales", "dealers", "products"], messages: ["messages/conversations"], policies: ["policies"], reports: ["reports"]
@@ -295,6 +295,7 @@ import { formatTitleCase } from "../utils/textFormatter";
         />
         {loadError && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800 shadow-sm"><span>{loadError}</span><Button variant="ghost" onClick={load}>Retry</Button></div>}
         {activeTab === "dashboard" && (user?.role === "ADMIN_CEO" ? <AdminCeoReadOnlyOverview endpoint="/admin-ceo/dashboard" type="dashboard" /> : user?.role === "PRODUCT_DELIVERY_MANAGER" ? <ProductDeliveryManagerDashboard analytics={data.dashboard_analytics} products={data.products || []} orders={data.orders || []} dealerStock={data.stock_dealers || []} fallbackCards={dashboardCards} /> : user?.role === "FINANCE_MANAGER" ? <FinanceManagerDashboard analytics={data.dashboard_analytics} payments={data.finance_payments?.payments || []} stats={data.finance_payments?.stats || {}} fallbackCards={dashboardCards} /> : <AdminAnalytics analytics={data.dashboard_analytics} fallbackCards={dashboardCards} />)}
+        {activeTab === "licenseUpgrade" && <LicenseCenter status={data["license-status"]} reload={() => load(true)} />}
         {activeTab === "adminManagers" && <AdminManagers />}
         {activeTab === "adminChat" && <AdminTeamChat chatTarget={chatTarget} />}
         {activeTab === "dealersOverview" && <AdminCeoReadOnlyOverview endpoint="/admin-ceo/dealers-overview" type="dealers" />}
@@ -314,7 +315,7 @@ import { formatTitleCase } from "../utils/textFormatter";
               <FormGrid onSubmit={(e) => {
                 e.preventDefault();
                 if (dealerForm.password !== dealerForm.confirmPassword) return alert("Passwords do not match");
-                create("/admin/dealers", dealerForm, () => setDealerForm({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", city: "", state: "", pincode: "", address: "" }));
+                create("/admin/dealers", dealerForm, () => setDealerForm({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", city: "", state: "", pincode: "", address: "", allocatedLicenses: 1 }));
               }}>
                 <TextField label="Dealer Name" value={dealerForm.dealerName} onChange={(e) => setDealerForm({ ...dealerForm, dealerName: e.target.value })} required />
                 <TextField label="Owner Name" value={dealerForm.ownerName} onChange={(e) => setDealerForm({ ...dealerForm, ownerName: e.target.value })} required />
@@ -322,6 +323,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                 <TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={dealerForm.phone} onChange={(e) => setDealerForm({ ...dealerForm, phone: e.target.value.replace(/\D/g, '') })} required />
                 <TextField label="Password" type={showDealerPassword ? "text" : "password"} value={dealerForm.password} onChange={(e) => setDealerForm({ ...dealerForm, password: e.target.value })} required suffix={<button type="button" onClick={() => setShowDealerPassword(!showDealerPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showDealerPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
                 <TextField label="Confirm Password" type={showDealerConfirmPassword ? "text" : "password"} value={dealerForm.confirmPassword} onChange={(e) => setDealerForm({ ...dealerForm, confirmPassword: e.target.value })} required suffix={<button type="button" onClick={() => setShowDealerConfirmPassword(!showDealerConfirmPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showDealerConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
+                <TextField label="Licenses for dealer" type="number" min="1" step="1" value={dealerForm.allocatedLicenses} onChange={(e) => setDealerForm({ ...dealerForm, allocatedLicenses: e.target.value })} required />
                 <SearchableSelect label="State" options={Object.keys(INDIA_STATES_CITIES)} value={dealerForm.state} onChange={(val) => setDealerForm({ ...dealerForm, state: val, city: "" })} placeholder="Select State..." required />
                 <SearchableSelect label="City" options={INDIA_STATES_CITIES[dealerForm.state] || []} value={dealerForm.city} onChange={(val) => setDealerForm({ ...dealerForm, city: val })} placeholder="Select City..." required disabled={!dealerForm.state} />
                 <TextField label="Pincode" value={dealerForm.pincode} onChange={(e) => setDealerForm({ ...dealerForm, pincode: e.target.value })} required />
@@ -331,7 +333,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                 <div className="md:col-span-2"><Button type="submit"><Plus size={16} /> Create Dealer</Button></div>
               </FormGrid>
             </Section>
-            <SimpleTable title="Dealer list" rows={data.dealers} cols={["dealerName", "ownerName", "email", "state", "city", "pincode", "status"]} />
+            <SimpleTable title="Dealer list" rows={data.dealers} cols={["dealerName", "ownerName", "email", "allocatedLicenses", "state", "city", "pincode", "status"]} />
           </>
         )}
         {activeTab === "products" && (
@@ -1126,6 +1128,55 @@ import { formatTitleCase } from "../utils/textFormatter";
     };
   }
 
+  function LicenseCenter({ status = {}, reload }) {
+    const [planId, setPlanId] = useState("");
+    const [quantity, setQuantity] = useState(1);
+    const [note, setNote] = useState("");
+    const [submitting, setSubmitting] = useState(false);
+    const plans = status?.plans || [];
+    const request = async (event) => {
+      event.preventDefault();
+      if (!planId) return window.alert("Select a license plan");
+      setSubmitting(true);
+      try {
+        await api.post("/admin/license-requests", { licensePlanId: Number(planId), quantity: Number(quantity), note });
+        setNote("");
+        await reload();
+        window.alert("License purchase request sent successfully");
+      } catch (error) {
+        window.alert(error.response?.data?.message || "Unable to request licenses");
+      } finally { setSubmitting(false); }
+    };
+    const changeAllocation = async (dealer) => {
+      const value = window.prompt(`Licenses to allocate to ${dealer.dealerName}`, String(dealer.allocatedLicenses));
+      if (value == null) return;
+      try {
+        await api.patch(`/admin/dealers/${dealer.id}/licenses`, { allocatedLicenses: Number(value) });
+        await reload();
+      } catch (error) { window.alert(error.response?.data?.message || "Unable to update allocation"); }
+    };
+    return <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card label="Total licenses" value={status?.totalLicenses ?? 0} />
+        <Card label="Licenses in use" value={status?.usedLicenses ?? 0} />
+        <Card label="Available licenses" value={status?.availableLicenses ?? 0} />
+      </div>
+      <Section title="Get more licenses">
+        <p className="mb-5 text-sm text-slate-600">Every organization admin, manager, dealer owner, and dealer manager uses one license. Dealer allocations are reserved from your available organization licenses.</p>
+        <FormGrid onSubmit={request}>
+          <Select label="License plan" value={planId} onChange={(e) => setPlanId(e.target.value)} required><option value="">Select plan</option>{plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} — {plan.dealerLimit} licenses — {formatMoney(plan.price)}</option>)}</Select>
+          <TextField label="Plan quantity" type="number" min="1" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+          <div className="md:col-span-2"><TextField label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          <div className="md:col-span-2"><Button type="submit" disabled={submitting || !plans.length}>{submitting ? "Sending..." : "Request More Licenses"}</Button></div>
+        </FormGrid>
+        {!plans.length && <p className="mt-4 text-sm font-semibold text-amber-700">No active license plans are available. Contact the Super Admin.</p>}
+      </Section>
+      <Section title="Dealer allocations">
+        <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr><th className="p-3">Dealer</th><th className="p-3">Allocated licenses</th><th className="p-3">Action</th></tr></thead><tbody>{(status?.dealers || []).map((dealer) => <tr key={dealer.id} className="border-t border-slate-100"><td className="p-3 font-semibold">{dealer.dealerName}</td><td className="p-3">{dealer.allocatedLicenses}</td><td className="p-3"><Button variant="ghost" onClick={() => changeAllocation(dealer)}>Change allocation</Button></td></tr>)}</tbody></table></div>
+      </Section>
+    </div>;
+  }
+
   function AdminManagers() {
     const [rows, setRows] = useState([]);
     const [showPassword, setShowPassword] = useState(false);
@@ -1140,9 +1191,13 @@ import { formatTitleCase } from "../utils/textFormatter";
       if (form.password !== form.confirmPassword) {
         return window.alert("Passwords do not match");
       }
-      await api.post("/admin-ceo/managers", form);
-      setForm({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
-      load(true);
+      try {
+        await api.post("/admin-ceo/managers", form);
+        setForm({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
+        load(true);
+      } catch (error) {
+        window.alert(error.response?.data?.message || "Unable to create manager");
+      }
     };
     const setStatus = async (id, status) => {
       await api.patch(`/admin-ceo/managers/${id}/status`, { status });
@@ -1447,4 +1502,3 @@ import { formatTitleCase } from "../utils/textFormatter";
 
 
 
-  

@@ -3,6 +3,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const { hardDeleteUser } = require("../utils/userCleanup");
 const { User } = require("../models");
 const { hasDealerManagers } = require("../utils/managerAssignment");
+const { dealerLicenseCapacity, licenseLimitError } = require("../utils/licenseService");
 
 const dealerManagerRoles = ["DEALER_STOCK_INVENTORY_MANAGER", "DEALER_STOCK_DELIVERY_MANAGER", "DEALER_SALES_FINANCE_MANAGER"];
 const assignableDealerManagerRoles = ["DEALER_STOCK_DELIVERY_MANAGER", "DEALER_SALES_FINANCE_MANAGER"];
@@ -20,8 +21,10 @@ exports.listManagers = asyncHandler(async (req, res) => {
 });
 
 exports.managerExists = asyncHandler(async (req, res) => {
-  res.json({ exists: await hasDealerManagers(req.user.dealerId) });
+  res.json({ exists: await hasDealerManagers(req.user.dealerId), licenseStatus: await dealerLicenseCapacity(req.user.dealerId) });
 });
+
+exports.licenseStatus = asyncHandler(async (req, res) => res.json(await dealerLicenseCapacity(req.user.dealerId)));
 
 exports.createManager = asyncHandler(async (req, res) => {
   const { name, email, password, phone, role } = req.body;
@@ -31,15 +34,10 @@ exports.createManager = asyncHandler(async (req, res) => {
   const normalizedEmail = String(email).trim().toLowerCase();
   const existing = await User.findOne({ where: { email: normalizedEmail } });
   if (existing) return res.status(400).json({ message: "Email already exists" });
-  const user = await User.create({
-    name,
-    email: normalizedEmail,
-    phone: phone || null,
-    password,
-    role,
-    status: "active",
-    companyId: req.user.companyId,
-    dealerId: req.user.dealerId
+  const user = await User.sequelize.transaction(async (transaction) => {
+    const license = await dealerLicenseCapacity(req.user.dealerId, { transaction });
+    if (license.availableLicenses < 1) throw licenseLimitError("No dealer licenses are available. Ask your organization admin to allocate another license.", license);
+    return User.create({ name, email: normalizedEmail, phone: phone || null, password, role, status: "active", companyId: req.user.companyId, dealerId: req.user.dealerId }, { transaction });
   });
   res.status(201).json({ id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, status: user.status });
 });

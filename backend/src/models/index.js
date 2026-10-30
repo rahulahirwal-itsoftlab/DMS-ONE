@@ -167,6 +167,7 @@ const AdminPinnedMessage = sequelize.define("AdminPinnedMessage", {
 
 const Dealer = sequelize.define("Dealer", {
   companyId: { type: DataTypes.INTEGER, allowNull: false },
+  allocatedLicenses: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   dealerName: { type: DataTypes.STRING, allowNull: false },
   ownerName: { type: DataTypes.STRING, allowNull: false },
   email: { type: DataTypes.STRING, allowNull: false, validate: { isEmail: true } },

@@ -26,6 +26,7 @@ const {
 } = require("../models");
 const { hasAdminManagers } = require("../utils/managerAssignment");
 const { publicPath } = require("../middleware/upload");
+const { licenseCapacity, licenseLimitError } = require("../utils/licenseService");
 
 const adminManagerRoles = ["DEALER_MANAGER", "PRODUCT_DELIVERY_MANAGER", "FINANCE_MANAGER"];
 const orgRoles = ["ADMIN_CEO", "ADMIN", ...adminManagerRoles];
@@ -294,7 +295,11 @@ exports.createManager = asyncHandler(async (req, res) => {
   const normalizedEmail = String(email).trim().toLowerCase();
   const existing = await User.findOne({ where: { email: normalizedEmail } });
   if (existing) return res.status(409).json({ message: "Email already exists" });
-  const manager = await User.create({ name, email: normalizedEmail, phone: phone || null, password, role, status: "active", companyId: req.user.companyId });
+  const manager = await User.sequelize.transaction(async (transaction) => {
+    const license = await licenseCapacity(req.user.companyId, { transaction });
+    if (license.availableLicenses < 1) throw licenseLimitError("No organization licenses are available. Purchase another license before creating a manager.", license);
+    return User.create({ name, email: normalizedEmail, phone: phone || null, password, role, status: "active", companyId: req.user.companyId }, { transaction });
+  });
   res.status(201).json(publicManager(manager));
 });
 

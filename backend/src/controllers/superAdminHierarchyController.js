@@ -538,6 +538,7 @@ exports.confirmPayment = asyncHandler(async (req, res) => {
       purchaseRequestId: request.id,
       activatedAt: new Date()
     }, { transaction });
+    await request.Company.increment("numberOfLicenses", { by: Number(request.totalDealerLimit || 0), transaction });
     await request.update({
       status: "LICENSE_DELIVERED",
       paymentStatus: "PAID",
@@ -548,7 +549,7 @@ exports.confirmPayment = asyncHandler(async (req, res) => {
       financeVerifiedAt: new Date()
     }, { transaction });
     const admins = await User.findAll({ where: { companyId: request.companyId, role: "ADMIN" }, transaction });
-    const text = `Your ${request.LicensePlan?.name || "license"} license has been activated. You can now add ${request.totalDealerLimit} more dealers.`;
+    const text = `Your ${request.LicensePlan?.name || "license"} purchase has been activated. ${request.totalDealerLimit} user license(s) were added to your organization.`;
     for (const admin of admins) {
       await Message.create({
         companyId: request.companyId,

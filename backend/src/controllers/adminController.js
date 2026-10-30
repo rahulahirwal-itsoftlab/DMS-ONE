@@ -28,7 +28,7 @@ const {
 const { publicPath } = require("../middleware/upload");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
 const { awardCreditCoinsForOrder, creditStatsForCompany, getOrCreateWallet, dateWhere } = require("../utils/credit");
-const { licenseCapacity } = require("../utils/licenseService");
+const { licenseCapacity, licenseLimitError } = require("../utils/licenseService");
 const { licenseSystemEnabled } = require("../utils/featureFlags");
 
 const companyScope = (req) => ({ companyId: req.user.companyId });
@@ -396,18 +396,20 @@ exports.company = asyncHandler(async (req, res) => {
 });
 
 exports.createDealer = asyncHandler(async (req, res) => {
-  const { password = "dealer123", ...body } = req.body;
+  const { password = "dealer123", allocatedLicenses: requestedAllocation = 1, ...body } = req.body;
+  const allocatedLicenses = Number(requestedAllocation);
   if (!body.dealerName || !body.ownerName || !body.email) return res.status(400).json({ message: "Dealer name, owner name and email are required" });
-  if (licenseSystemEnabled()) {
-    const license = await licenseCapacity(req.user.companyId);
-    if (license.limitReached) return res.status(403).json({ code: "LICENSE_LIMIT_REACHED", message: "Dealer license capacity has been reached.", licenseStatus: license });
-  }
+  if (!Number.isInteger(allocatedLicenses) || allocatedLicenses < 1) return res.status(400).json({ message: "A dealer requires at least 1 allocated license" });
   const existingUser = await User.findOne({ where: { email: body.email } });
   if (existingUser) return res.status(409).json({ message: "A user with this email already exists" });
   const existingDealer = await Dealer.findOne({ where: { companyId: req.user.companyId, email: body.email } });
   if (existingDealer) return res.status(409).json({ message: "A dealer with this email already exists" });
   const result = await User.sequelize.transaction(async (transaction) => {
-    const dealer = await Dealer.create({ ...body, companyId: req.user.companyId }, { transaction });
+    if (licenseSystemEnabled()) {
+      const license = await licenseCapacity(req.user.companyId, { transaction });
+      if (license.availableLicenses < allocatedLicenses) throw licenseLimitError(`Only ${license.availableLicenses} organization license(s) are available. Purchase more licenses or reduce the dealer allocation.`, license);
+    }
+    const dealer = await Dealer.create({ ...body, allocatedLicenses, companyId: req.user.companyId }, { transaction });
     const user = await User.create({
       name: body.ownerName || body.dealerName,
       email: body.email,
@@ -419,6 +421,23 @@ exports.createDealer = asyncHandler(async (req, res) => {
     return { dealer, user: { id: user.id, email: user.email } };
   });
   res.status(201).json(result);
+});
+
+exports.updateDealerLicenses = asyncHandler(async (req, res) => {
+  const allocatedLicenses = Number(req.body.allocatedLicenses);
+  if (!Number.isInteger(allocatedLicenses) || allocatedLicenses < 1) return res.status(400).json({ message: "Allocated licenses must be a positive whole number" });
+  const dealer = await User.sequelize.transaction(async (transaction) => {
+    const row = await Dealer.findOne({ where: { id: req.params.id, companyId: req.user.companyId }, transaction, lock: transaction.LOCK.UPDATE });
+    if (!row) { const error = new Error("Dealer not found"); error.status = 404; throw error; }
+    const managerCount = await User.count({ where: { dealerId: row.id, role: { [Op.in]: ["DEALER_STOCK_INVENTORY_MANAGER", "DEALER_STOCK_DELIVERY_MANAGER", "DEALER_SALES_FINANCE_MANAGER"] } }, transaction });
+    if (allocatedLicenses < managerCount + 1) { const error = new Error(`This dealer already uses ${managerCount + 1} licenses. Remove managers before reducing the allocation.`); error.status = 409; throw error; }
+    const status = await licenseCapacity(req.user.companyId, { transaction });
+    const increase = allocatedLicenses - Math.max(1, Number(row.allocatedLicenses || 1));
+    if (increase > status.availableLicenses) throw licenseLimitError(`Only ${status.availableLicenses} organization license(s) are available.`, status);
+    await row.update({ allocatedLicenses }, { transaction });
+    return row;
+  });
+  res.json({ message: "Dealer license allocation updated", dealer, licenseStatus: await licenseCapacity(req.user.companyId) });
 });
 
 exports.licenseStatus = asyncHandler(async (req, res) => {
@@ -468,7 +487,7 @@ exports.dealers = asyncHandler(async (req, res) => {
   const limit = [10, 25, 50].includes(Number(req.query.limit)) ? Number(req.query.limit) : 10;
   const { count, rows } = await Dealer.findAndCountAll({
     where,
-    attributes: ["id", "dealerName", "ownerName", "email", "phone", "area", "city", "state", "pincode", "address", "status", "createdAt", "updatedAt"],
+    attributes: ["id", "dealerName", "ownerName", "email", "phone", "area", "city", "state", "pincode", "address", "allocatedLicenses", "status", "createdAt", "updatedAt"],
     order: [[sortBy, sortOrder]], limit, offset: (page - 1) * limit
   });
   const filterScope = companyScope(req);

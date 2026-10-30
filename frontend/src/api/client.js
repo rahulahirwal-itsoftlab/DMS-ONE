@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearApiCache } from "../utils/sessionApiCache";
 
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000/api",
@@ -21,7 +22,10 @@ api.interceptors.request.use((config) => {
 });
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.config?.method && response.config.method.toLowerCase() !== "get") clearApiCache();
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem("dms_token");

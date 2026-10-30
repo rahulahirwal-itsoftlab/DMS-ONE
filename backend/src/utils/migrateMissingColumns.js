@@ -49,7 +49,8 @@ const columns = {
     salesNotes: { type: DataTypes.TEXT, allowNull: true }
   },
   Dealers: {
-    pincode: { type: DataTypes.STRING, allowNull: true }
+    pincode: { type: DataTypes.STRING, allowNull: true },
+    allocatedLicenses: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 }
   },
   Products: {
     image: { type: DataTypes.STRING },
@@ -175,16 +176,16 @@ async function migrateMissingColumns() {
       });
     }
   }
-  if (process.env.ENABLE_LICENSE_SYSTEM === "true") await seedLicenseDefaults();
+  await seedLicenseDefaults();
   await migrateMainSuperAdmin();
   await migrateCompanyAdmins();
-  if (process.env.ENABLE_LICENSE_SYSTEM === "true") await ensureDefaultCompanyLicenses();
+  await ensureDefaultCompanyLicenses();
 }
 
 async function seedLicenseDefaults() {
   const plans = [
-    { name: "Gold", dealerLimit: 10, price: 10000, description: "Gold License - adds capacity for 10 dealers", status: "active" },
-    { name: "Platinum", dealerLimit: 20, price: 18000, description: "Platinum License - adds capacity for 20 dealers", status: "active" }
+    { name: "Gold", dealerLimit: 10, price: 10000, description: "Gold License - adds 10 user seats", status: "active" },
+    { name: "Platinum", dealerLimit: 20, price: 18000, description: "Platinum License - adds 20 user seats", status: "active" }
   ];
   for (const plan of plans) {
     const [row] = await LicensePlan.findOrCreate({ where: { name: plan.name }, defaults: plan });

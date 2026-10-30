@@ -53,6 +53,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
             <Route path="/dealer-stock-delivery/dashboard" element={<ProtectedRoute role={["DEALER_STOCK_INVENTORY_MANAGER", "DEALER_STOCK_DELIVERY_MANAGER"]}><Dealer /></ProtectedRoute>} />
             <Route path="/dealer-sales-finance/dashboard" element={<ProtectedRoute role="DEALER_SALES_FINANCE_MANAGER"><Dealer /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="*" element={<HomeRedirect />} />
           </Route>
         </Routes>
       </AuthProvider>

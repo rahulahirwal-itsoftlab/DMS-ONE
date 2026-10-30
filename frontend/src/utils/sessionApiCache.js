@@ -1,5 +1,6 @@
 const PREFIX = "dms_api_cache:v2:";
 const DEFAULT_TTL = 5 * 60 * 1000;
+const pendingRequests = new Map();
 
 const cacheOwner = () => {
   try {
@@ -24,12 +25,17 @@ export async function cachedGet(api, url, config = {}, options = {}) {
     }
   }
 
-  const response = await api.get(url, config);
-  try {
-    sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: response.data }));
-  } catch {
-    // Storage may be unavailable or full; the request result is still usable.
-  }
+  if (!force && pendingRequests.has(key)) return pendingRequests.get(key);
+  const request = api.get(url, config).then((response) => {
+    try {
+      sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data: response.data }));
+    } catch {
+      // Storage may be unavailable or full; the request result is still usable.
+    }
+    return response;
+  }).finally(() => pendingRequests.delete(key));
+  pendingRequests.set(key, request);
+  const response = await request;
   return response;
 }
 
@@ -38,5 +44,12 @@ export function invalidateApiCache(urlPrefix = "") {
   for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
     const key = sessionStorage.key(index);
     if (key?.startsWith(prefix)) sessionStorage.removeItem(key);
+  }
+}
+
+export function clearApiCache() {
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith(PREFIX)) sessionStorage.removeItem(key);
   }
 }

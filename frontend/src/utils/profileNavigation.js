@@ -34,6 +34,7 @@ export const roleTabs = {
   ],
   ADMIN: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+    { id: "licenseUpgrade", label: "Licenses", icon: "credits" },
     { id: "dealers", label: "Dealers", icon: "dealers" },
     { id: "dealerPerformance", label: "Dealer Performance", icon: "performance" },
     { id: "products", label: "Products", icon: "products" },
@@ -50,6 +51,7 @@ export const roleTabs = {
   ],
   ADMIN_CEO: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
+    { id: "licenseUpgrade", label: "Licenses", icon: "credits" },
     { id: "adminManagers", label: "Managers", icon: "dealers" },
     { id: "dealersOverview", label: "Dealer Analytics", icon: "dealers" },
     { id: "productOverview", label: "Product Performance", icon: "products" },

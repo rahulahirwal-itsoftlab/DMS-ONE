@@ -8,6 +8,7 @@ const {
   AdminInternalMessage, DealerInternalMessage, AdminPinnedMessage,
   InternalNotification, OrderScheduledMessage
 } = require("../models");
+const { licenseCapacity } = require("../utils/licenseService");
 
 const adminRoles = ["ADMIN_CEO", "ADMIN"];
 const editableCompanyFields = ["orgId", "companyName", "category", "description", "phone", "address", "city", "state", "pincode", "numberOfLicenses", "startDate", "endDate", "status"];
@@ -183,7 +184,11 @@ exports.updateOrganization = asyncHandler(async (req, res) => {
     const duplicateOrg = await Company.findOne({ where: { orgId: updates.orgId, id: { [Op.ne]: company.id } } });
     if (duplicateOrg) return res.status(409).json({ message: "An organization with this organization ID already exists" });
   }
-  if (Object.prototype.hasOwnProperty.call(updates, "numberOfLicenses")) updates.numberOfLicenses = Number(updates.numberOfLicenses);
+  if (Object.prototype.hasOwnProperty.call(updates, "numberOfLicenses")) {
+    updates.numberOfLicenses = Number(updates.numberOfLicenses);
+    const currentLicense = await licenseCapacity(company.id);
+    if (updates.numberOfLicenses < currentLicense.usedLicenses) return res.status(409).json({ message: `This organization currently uses ${currentLicense.usedLicenses} licenses. Remove users or dealer allocations before reducing the total.` });
+  }
   if (updates.status) updates.status = normalizeStatus(updates.status);
   const admin = await adminFor(company.id);
   const adminUpdates = {};

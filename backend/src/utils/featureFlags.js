@@ -6,5 +6,5 @@ function enabled(name, defaultValue = false) {
 
 module.exports = {
   superAdminManagerRolesEnabled: () => enabled("ENABLE_SUPER_ADMIN_MANAGER_ROLES", false),
-  licenseSystemEnabled: () => enabled("ENABLE_LICENSE_SYSTEM", false)
+  licenseSystemEnabled: () => true
 };

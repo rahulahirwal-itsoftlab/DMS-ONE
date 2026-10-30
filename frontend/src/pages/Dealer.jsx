@@ -500,10 +500,15 @@ function DealerManagers() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [editingManager, setEditingManager] = useState(null);
+  const [license, setLicense] = useState(null);
 
   const load = async (force = false) => {
-    const { data } = await cachedGet(api, "/dealer-ceo/managers", {}, { force });
-    setRows(data);
+    const [managers, licenseStatus] = await Promise.all([
+      cachedGet(api, "/dealer-ceo/managers", {}, { force }),
+      cachedGet(api, "/dealer-ceo/license-status", {}, { force })
+    ]);
+    setRows(managers.data);
+    setLicense(licenseStatus.data);
   };
   useEffect(() => { load(); }, []);
 
@@ -596,9 +601,10 @@ function DealerManagers() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">Dealer Managers</h2>
+          {license && <p className="mt-1 text-sm text-slate-500">Licenses: {license.usedLicenses} used of {license.totalLicenses} · {license.availableLicenses} available</p>}
           <p className="text-sm text-slate-500">Create and control access for dealer team roles.</p>
         </div>
-        <Button onClick={() => { setOpenCreate(true); setError(""); setMessage(""); }}>Create Manager</Button>
+        <Button disabled={license?.availableLicenses === 0} onClick={() => { setOpenCreate(true); setError(""); setMessage(""); }}>{license?.availableLicenses === 0 ? "No license available" : "Create Manager"}</Button>
       </div>
       {message && <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">{message}</div>}
       {error && !openCreate && <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</div>}

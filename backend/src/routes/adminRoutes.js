@@ -36,6 +36,7 @@ function adminSectionGuard(req, res, next) {
 async function blockAdminCeoAssignedWork(req, res, next) {
   if (!["ADMIN", "ADMIN_CEO"].includes(req.user.role)) return next();
   if (req.method === "GET") return next();
+  if (/^\/dealers\/\d+\/licenses$/.test(req.path)) return next();
   if (!(await hasAdminManagers(req.user.companyId))) return next();
   const assignedPrefixes = [
     /^\/dealers/,
@@ -64,6 +65,7 @@ router.post("/license-requests", licenseSystemEnabled() ? ctrl.createLicenseRequ
 router.route("/dealers").get(ctrl.dealers).post(ctrl.createDealer);
 router.get("/dealers/:id", ctrl.getDealer);
 router.route("/dealers/:id").put(ctrl.updateDealer).delete(ctrl.deleteDealer);
+router.patch("/dealers/:id/licenses", ctrl.updateDealerLicenses);
 router.patch("/dealers/:id/status", ctrl.setDealerStatus);
 router.route("/products").get(ctrl.products).post(productImageUpload.single("image"), ctrl.createProduct);
 router.put("/products/:id", productImageUpload.single("image"), ctrl.updateProduct);

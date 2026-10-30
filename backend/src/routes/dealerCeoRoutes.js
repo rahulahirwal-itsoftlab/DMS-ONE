@@ -4,6 +4,7 @@ const { protect, permit } = require("../middleware/auth");
 
 router.use(protect, permit("DEALER", "DEALER_CEO"));
 router.get("/manager-exists", ctrl.managerExists);
+router.get("/license-status", ctrl.licenseStatus);
 router.post("/managers", ctrl.createManager);
 router.get("/managers", ctrl.listManagers);
 router.put("/managers/:id", ctrl.updateManager);

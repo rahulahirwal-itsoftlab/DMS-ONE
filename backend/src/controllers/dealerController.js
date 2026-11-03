@@ -6,6 +6,7 @@ const {
   ProductVariant,
   CompanyInventory,
   DealerInventory,
+  DealerExchangeInventory,
   DealerSale,
   InternalNotification,
   Order,
@@ -173,6 +174,15 @@ exports.orders = asyncHandler(async (req, res) => {
   res.json(orders.sort((a, b) => (priority[a.status] || 99) - (priority[b.status] || 99) || new Date(b.createdAt) - new Date(a.createdAt)));
 });
 
+exports.cancelOrder = asyncHandler(async (req, res) => {
+  const order = await Order.findOne({ where: { id: req.params.id, ...scope(req) } });
+  if (!order) return res.status(404).json({ message: "Order not found" });
+  if (order.status !== "pending") return res.status(400).json({ message: "Only pending orders can be cancelled" });
+  await order.update({ status: "cancelled", rejectionReason: "Cancelled by dealer manager" });
+  await DeliveryTracking.create({ orderId: order.id, status: "cancelled", message: "Order cancelled by dealer manager", updatedBy: req.user.id });
+  res.json(order);
+});
+
 exports.delivery = asyncHandler(async (req, res) => {
   const orders = await Order.findAll({
     where: { ...scope(req), status: { [Op.notIn]: ["pending", "rejected", "cancelled"] } },
@@ -211,7 +221,16 @@ exports.stockRequest = asyncHandler(async (req, res) => {
 });
 
 exports.inventory = asyncHandler(async (req, res) => {
-  res.json(await DealerInventory.findAll({ where: scope(req), include: [Product, ProductVariant] }));
+  const [main, exchange] = await Promise.all([
+    DealerInventory.findAll({ where: scope(req), include: [Product, ProductVariant] }),
+    DealerExchangeInventory.findAll({ where: scope(req), include: [Product, ProductVariant] })
+  ]);
+  const exchangeByKey = new Map(exchange.map((row) => [`${row.productId}:${row.productVariantId || ""}`, Number(row.quantity || 0)]));
+  const mainKeys = new Set(main.map((row) => `${row.productId}:${row.productVariantId || ""}`));
+  res.json([...main.map((row) => {
+    const exchangeQuantity = exchangeByKey.get(`${row.productId}:${row.productVariantId || ""}`) || 0;
+    return { ...row.toJSON(), mainQuantity: Number(row.quantity || 0), exchangeQuantity, quantity: Number(row.quantity || 0) + exchangeQuantity };
+  }), ...exchange.filter((row) => !mainKeys.has(`${row.productId}:${row.productVariantId || ""}`)).map((row) => ({ ...row.toJSON(), id: `exchange-${row.id}`, mainQuantity: 0, exchangeQuantity: Number(row.quantity || 0), quantity: Number(row.quantity || 0) }))]);
 });
 
 exports.updateInventory = asyncHandler(async (req, res) => {
@@ -252,12 +271,11 @@ exports.createSale = asyncHandler(async (req, res) => {
       lock: transaction.LOCK.UPDATE,
       transaction
     });
-    if (!inventory) {
-      const error = new Error("Product is not available in your inventory");
-      error.status = 404;
-      throw error;
-    }
-    const availableStock = Number(inventory.quantity || 0);
+    const exchangeInventory = await DealerExchangeInventory.findOne({ where: { companyId: req.user.companyId, dealerId: req.user.dealerId, productId, productVariantId }, lock: transaction.LOCK.UPDATE, transaction });
+    if (!inventory && !exchangeInventory) { const error = new Error("Product is not available in your inventory"); error.status = 404; throw error; }
+    const mainStock = Number(inventory?.quantity || 0);
+    const exchangeStock = Number(exchangeInventory?.quantity || 0);
+    const availableStock = mainStock + exchangeStock;
     if (quantitySold > availableStock) {
       const error = new Error("You cannot sell more than available inventory stock");
       error.status = 400;
@@ -265,14 +283,16 @@ exports.createSale = asyncHandler(async (req, res) => {
       error.requestedQuantity = quantitySold;
       throw error;
     }
+    const mainSold = Math.min(mainStock, quantitySold);
+    const exchangeSold = quantitySold - mainSold;
     const stockAfter = availableStock - quantitySold;
     const created = await DealerSale.create({
       companyId: req.user.companyId,
       dealerId: req.user.dealerId,
       productId,
       productVariantId,
-      variantName: inventory.variantName,
-      colorName: inventory.colorName,
+      variantName: inventory?.variantName || exchangeInventory?.variantName,
+      colorName: inventory?.colorName || exchangeInventory?.colorName,
       saleDate,
       quantitySold,
       stockBefore: availableStock,
@@ -280,11 +300,12 @@ exports.createSale = asyncHandler(async (req, res) => {
       remarks: req.body.remarks || null,
       createdBy: req.user.id
     }, { transaction });
-    await inventory.update({ quantity: stockAfter }, { transaction });
+    if (inventory && mainSold) await inventory.update({ quantity: mainStock - mainSold }, { transaction });
+    if (exchangeInventory && exchangeSold) await exchangeInventory.update({ quantity: exchangeStock - exchangeSold }, { transaction });
 
-    const limit = Number(inventory.lowStockLimit || 0);
+    const limit = Number(inventory?.lowStockLimit || 0);
     if (stockAfter <= limit) {
-      const productName = inventory.Product?.productName || "Product";
+      const productName = inventory?.Product?.productName || "Product";
       const message = `${productName} has low stock in your inventory. Current stock: ${stockAfter}. Minimum limit: ${limit}.`;
       const existing = await InternalNotification.findOne({
         where: {

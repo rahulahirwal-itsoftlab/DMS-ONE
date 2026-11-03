@@ -226,6 +226,16 @@ const DealerInventory = sequelize.define("DealerInventory", {
   lowStockLimit: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 5 }
 }, { tableName: "dealer_inventory" });
 
+const DealerExchangeInventory = sequelize.define("DealerExchangeInventory", {
+  dealerId: { type: DataTypes.INTEGER, allowNull: false },
+  companyId: { type: DataTypes.INTEGER, allowNull: false },
+  productId: { type: DataTypes.INTEGER, allowNull: false },
+  productVariantId: { type: DataTypes.INTEGER, allowNull: true },
+  variantName: { type: DataTypes.STRING, allowNull: true },
+  colorName: { type: DataTypes.STRING, allowNull: true },
+  quantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
+}, { tableName: "dealer_exchange_inventory", indexes: [{ name: "dealer_exchange_inv_owner_product_variant_uidx", unique: true, fields: ["dealerId", "productId", "productVariantId"] }] });
+
 const InternalNotification = sequelize.define("InternalNotification", {
   companyId: { type: DataTypes.INTEGER, allowNull: true },
   dealerId: { type: DataTypes.INTEGER, allowNull: true },
@@ -275,6 +285,10 @@ const DealerStockTransferRequest = sequelize.define("DealerStockTransferRequest"
   adminApprovedAt: { type: DataTypes.DATE, allowNull: true },
   adminRejectReason: { type: DataTypes.TEXT, allowNull: true },
   completedAt: { type: DataTypes.DATE, allowNull: true },
+  exchangeReceivedAt: { type: DataTypes.DATE, allowNull: true },
+  isReturn: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+  parentTransferId: { type: DataTypes.INTEGER, allowNull: true },
+  returnedQuantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   reminderSentAt: { type: DataTypes.DATE, allowNull: true },
   returnReminderNote: { type: DataTypes.TEXT, allowNull: true }
 }, {
@@ -502,6 +516,9 @@ ProductVariant.belongsTo(Product, { foreignKey: "productId" });
 DealerInventory.belongsTo(Product, { foreignKey: "productId" });
 DealerInventory.belongsTo(ProductVariant, { foreignKey: "productVariantId" });
 DealerInventory.belongsTo(Dealer, { foreignKey: "dealerId" });
+DealerExchangeInventory.belongsTo(Product, { foreignKey: "productId" });
+DealerExchangeInventory.belongsTo(ProductVariant, { foreignKey: "productVariantId" });
+DealerExchangeInventory.belongsTo(Dealer, { foreignKey: "dealerId" });
 InternalNotification.belongsTo(Dealer, { foreignKey: "dealerId" });
 InternalNotification.belongsTo(User, { foreignKey: "userId" });
 DealerSale.belongsTo(Product, { foreignKey: "productId" });
@@ -552,6 +569,7 @@ module.exports = {
   CompanyInventory,
   ProductVariant,
   DealerInventory,
+  DealerExchangeInventory,
   InternalNotification,
   DealerSale,
   DealerStockTransferRequest,

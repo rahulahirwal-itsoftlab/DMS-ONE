@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useState } from "react";
-import { Gift, Star, Eye, EyeOff, X, Pencil, Trash2 } from "lucide-react";
+import { Gift, Star, Eye, EyeOff, X, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Layout from "../components/Layout";
 import { api, fileUrl } from "../api/client";
@@ -209,6 +209,16 @@ function DealerDashboard() {
     load(true);
   };
 
+  const cancelOrder = async (order) => {
+    if (!confirm(`Cancel order ${order.orderNumber}?`)) return;
+    try {
+      await api.patch(`/dealer/orders/${order.id}/cancel`);
+      await load(true);
+    } catch (error) {
+      alert(error.response?.data?.message || "Unable to cancel order");
+    }
+  };
+
   const sendReply = async (e) => {
     e.preventDefault();
     await api.post("/dealer/messages/reply", { message: reply });
@@ -263,6 +273,12 @@ function DealerDashboard() {
     load(true);
   };
 
+  const clearReadUpdates = async () => {
+    if (!confirm("Delete all read internal updates? This cannot be undone.")) return;
+    await api.delete("/internal-updates/read-all");
+    load(true);
+  };
+
   if (loading) return <Layout title="Dealer" subtitle="Dealer self-service workspace" tabs={visibleTabs} activeTab={activeTab} onTab={setActiveTab}><Loading /></Layout>;
 
   const dashboard = data.dashboard || {};
@@ -305,6 +321,7 @@ function DealerDashboard() {
         eyebrow={String(user?.role || "Dealer").replaceAll("_", " ")}
         title={visibleTabs.find((tab) => tab.id === activeTab)?.label || "Dashboard"}
         description="Track inventory, orders, sales, deliveries, payments and credits from your dealer workspace."
+        actions={<Button variant="ghost" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh</Button>}
       />
       {loadError && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800 shadow-sm"><span>{loadError}</span><Button variant="ghost" onClick={load}>Retry</Button></div>}
       {activeTab === "dashboard" && <div className="space-y-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{dashboardCards.map(([label, value]) => <Card key={label} label={label} value={value} />)}</div><div className="grid gap-6 xl:grid-cols-2"><ChartCard title="Order status chart"><div className="h-72"><ResponsiveContainer><PieChart><Pie data={orderStatusChart} dataKey="count" nameKey="status" outerRadius={90} label>{orderStatusChart.map((entry, index) => <Cell key={entry.status} fill={["#4F46E5", "#0EA5E9", "#10B981", "#F59E0B", "#F43F5E"][index % 5]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></ChartCard><ChartCard title="Stock chart"><div className="h-72"><ResponsiveContainer><BarChart data={stockChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="product" /><YAxis /><Tooltip /><Bar dataKey="quantity" fill="#0EA5E9" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></ChartCard><ChartCard title="Payment status chart"><div className="h-72"><ResponsiveContainer><PieChart><Pie data={paymentChart} dataKey="count" nameKey="status" outerRadius={90} label>{paymentChart.map((entry, index) => <Cell key={entry.status} fill={["#F59E0B", "#10B981", "#F43F5E", "#64748B"][index % 4]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></ChartCard><ChartCard title="Purchase amount"><div className="grid h-72 place-items-center rounded-md bg-slate-50 text-center"><div><p className="text-sm font-semibold text-slate-500">Total purchase value</p><p className="mt-2 text-4xl font-semibold text-slate-950">{formatMoney(dashboard.totalPurchaseAmount)}</p></div></div></ChartCard></div></div>}
@@ -316,159 +333,129 @@ function DealerDashboard() {
         </Section>)
       )}
       {stockRequest && <StockRequestModal request={stockRequest} setRequest={setStockRequest} onSubmit={sendStockRequest} />}
-      {activeTab === "orders" && guarded("orders", <Orders rows={orders} filter={orderFilter} setFilter={setOrderFilter} search={orderSearch} setSearch={setOrderSearch} />)}
+      {activeTab === "orders" && guarded("orders", <Orders rows={orders} filter={orderFilter} setFilter={setOrderFilter} search={orderSearch} setSearch={setOrderSearch} onCancel={cancelOrder} />)}
       {activeTab === "delivery" && guarded("delivery", <DeliveryBoard rows={delivery} />)}
       {activeTab === "inventory" && guarded("inventory", <DealerInventory rows={inventory} updateLowStockLimit={updateLowStockLimit} readOnly={ceoReadOnly} />)}
-      {activeTab === "dealerStockExchange" && guarded("dealerStockExchange", <DealerStockExchange reloadDealer={load} />)}
+      {activeTab === "dealerStockExchange" && guarded("dealerStockExchange", user?.role === "DEALER_STOCK_DELIVERY_MANAGER" ? <DealerStockExchange /> : <AccessDenied />)}
       {activeTab === "sales" && guarded("sales", <DealerSales inventory={inventory} sales={sales} form={saleForm} setForm={setSaleForm} onSubmit={recordSale} filter={salesFilter} setFilter={setSalesFilter} error={salesError} readOnly={ceoReadOnly} />)}
       {activeTab === "finance" && guarded("finance", <DealerFinance rows={finance} pay={ceoReadOnly ? () => alert("Managed by assigned manager") : pay} readOnly={ceoReadOnly} />)}
       {activeTab === "creditStore" && guarded("creditStore", <CreditStore store={data.credit_store || {}} redemptions={creditRedemptions} transactions={creditTransactions} reload={load} />)}
       {activeTab === "policies" && guarded("policies", <Table title="Policies & information" rows={policies} cols={["title", "description", "createdAt"]} />)}
       {activeTab === "messages" && guarded("messages", <DealerChat messages={messages} reply={reply} setReply={setReply} sendReply={sendReply} />)}
       {activeTab === "teamChat" && guarded("teamChat", <DealerTeamChat />)}
-      {activeTab === "internalUpdates" && <InternalUpdates data={data.internalUpdates} filter={internalFilter} setFilter={setInternalFilter} markRead={markUpdateRead} markAll={markAllUpdatesRead} />}
+      {activeTab === "internalUpdates" && <InternalUpdates data={data.internalUpdates} filter={internalFilter} setFilter={setInternalFilter} markRead={markUpdateRead} markAll={markAllUpdatesRead} clearRead={clearReadUpdates} />}
       {activeTab === "reports" && <Section title="Send update/report to admin"><FormGrid onSubmit={sendReport}>{Object.keys(report).map((k) => <TextField key={k} label={k} value={report[k]} onChange={(e) => setReport({ ...report, [k]: e.target.value })} />)}<div className="md:col-span-2"><Button>Send Report</Button></div></FormGrid></Section>}
     </Layout>
   );
 }
 
-function DealerStockExchange({ reloadDealer }) {
-  const [sku, setSku] = useState("");
+function DealerStockExchange() {
+  const [term, setTerm] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedProduct, setSelectedProduct] = useState(null);
   const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [mainInventory, setMainInventory] = useState([]);
+  const [exchangeInventory, setExchangeInventory] = useState([]);
+  const [sent, setSent] = useState([]);
+  const [incoming, setIncoming] = useState([]);
+  const [returns, setReturns] = useState([]);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [requestTarget, setRequestTarget] = useState(null);
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
-  const [sent, setSent] = useState([]);
-  const [received, setReceived] = useState([]);
-  const [historyTab, setHistoryTab] = useState("sent");
-  const [filter, setFilter] = useState("ALL");
-  const [reminderTarget, setReminderTarget] = useState(null);
-  const loadHistory = async () => {
-    const [sentRes, receivedRes] = await Promise.all([
+  const [moveQuantities, setMoveQuantities] = useState({});
+  const [section, setSection] = useState("inventory");
+
+  const load = async () => {
+    const [stock, sentRows, incomingRows, returnRows] = await Promise.all([
+      api.get("/dealer-stock-exchange/inventory"),
       api.get("/dealer-stock-exchange/requests/sent"),
-      api.get("/dealer-stock-exchange/requests/received", { params: { completedOnly: "true" } })
+      api.get("/dealer-stock-exchange/requests/incoming"),
+      api.get("/dealer-stock-exchange/requests/returns")
     ]);
-    setSent(sentRes.data || []);
-    setReceived(receivedRes.data || []);
+    setMainInventory(stock.data.main || []);
+    setExchangeInventory(stock.data.exchange || []);
+    setSent(sentRows.data || []);
+    setIncoming(incomingRows.data || []);
+    setReturns(returnRows.data || []);
   };
-  useEffect(() => { loadHistory().catch(() => null); }, []);
+  useEffect(() => { load().catch((err) => setError(err.response?.data?.message || "Unable to load exchange workspace")); }, []);
+  useEffect(() => {
+    const q = term.trim();
+    if (q.length < 2 || selectedProduct) { setSuggestions([]); return; }
+    const timer = setTimeout(async () => {
+      try { const { data } = await api.get("/dealer-stock-exchange/search", { params: { q } }); setSuggestions(data.suggestions || []); }
+      catch { setSuggestions([]); }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [term, selectedProduct]);
 
-  const search = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      const { data } = await api.get("/dealer-stock-exchange/search", { params: { sku } });
-      setResult(data);
-    } catch (err) {
-      setResult(null);
-      setError(err.response?.data?.message || "Unable to search SKU");
-    } finally {
-      setLoading(false);
-    }
+  const search = async (event) => {
+    event.preventDefault();
+    if (!selectedProduct) { setError("Choose a product from the suggestions first."); return; }
+    setBusy(true); setError("");
+    try { const { data } = await api.get("/dealer-stock-exchange/search", { params: { productId: selectedProduct.id } }); setResult(data); }
+    catch (err) { setResult(null); setError(err.response?.data?.message || "Could not search exchange inventory"); }
+    finally { setBusy(false); }
   };
-
-  const submitRequest = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post("/dealer-stock-exchange/requests", {
-        senderDealerId: requestTarget.dealerId,
-        productId: requestTarget.productId,
-        productVariantId: requestTarget.productVariantId,
-        requestedQuantity: Number(quantity),
-        reason
-      });
-      setRequestTarget(null);
-      setQuantity("");
-      setReason("");
-      alert("Stock request created");
-      await Promise.all([loadHistory(), reloadDealer?.()]);
-    } catch (err) {
-      alert(err.response?.data?.message || "Unable to create stock request");
-    }
+  const moveToExchange = async (row) => {
+    const amount = Number(moveQuantities[row.id]);
+    if (!Number.isInteger(amount) || amount < 1 || amount > Number(row.quantity)) { setError(`Enter a quantity from 1 to ${row.quantity}.`); return; }
+    setBusy(true); setError("");
+    try { await api.post("/dealer-stock-exchange/inventory/move", { productId: row.productId, productVariantId: row.productVariantId, quantity: amount }); setMoveQuantities({ ...moveQuantities, [row.id]: "" }); await load(); }
+    catch (err) { setError(err.response?.data?.message || "Could not move stock"); }
+    finally { setBusy(false); }
   };
-
-  const cancel = async (row) => {
-    if (!confirm(`Cancel request for ${row.productNameSnapshot}?`)) return;
-    await api.patch(`/dealer-stock-exchange/requests/${row.id}/cancel`);
-    loadHistory();
+  const removeFromExchange = async (row) => {
+    const amount = Number(window.prompt(`Quantity to return to main inventory (1–${row.quantity}):`, String(row.quantity)));
+    if (!Number.isInteger(amount) || amount < 1 || amount > Number(row.quantity)) return;
+    try { await api.post("/dealer-stock-exchange/inventory/remove", { productId: row.productId, productVariantId: row.productVariantId, quantity: amount }); await load(); }
+    catch (err) { setError(err.response?.data?.message || "Could not return stock to main inventory"); }
   };
-
-  const sendReminder = async (note) => {
-    await api.post(`/dealer-stock-exchange/requests/${reminderTarget.id}/reminder`, { note });
-    setReminderTarget(null);
-    alert("Reminder sent");
-    loadHistory();
+  const requestStock = async (event) => {
+    event.preventDefault();
+    try { await api.post("/dealer-stock-exchange/requests", { senderDealerId: requestTarget.dealerId, productId: requestTarget.productId, productVariantId: requestTarget.productVariantId, requestedQuantity: Number(quantity), reason }); setRequestTarget(null); setQuantity(""); setReason(""); await load(); }
+    catch (err) { setError(err.response?.data?.message || "Could not send exchange request"); }
   };
+  const action = async (id, actionName, method = "patch") => {
+    try { await api[method](`/dealer-stock-exchange/requests/${id}/${actionName}`); await load(); }
+    catch (err) { setError(err.response?.data?.message || "Exchange action failed"); }
+  };
+  const createReturn = async (row) => {
+    const outstanding = Number(row.requestedQuantity) - Number(row.returnedQuantity || 0);
+    const amount = Number(window.prompt(`Return quantity (1–${outstanding}):`, String(outstanding)));
+    if (!Number.isInteger(amount) || amount < 1 || amount > outstanding) return;
+    try { await api.post(`/dealer-stock-exchange/requests/${row.id}/return`, { quantity: amount }); await load(); }
+    catch (err) { setError(err.response?.data?.message || "Could not create return"); }
+  };
+  const nav = [["inventory", "Exchange inventory"], ["search", "Find dealer stock"], ["incoming", "Requests received"], ["sent", "Requests sent"], ["returns", "Returns"]];
+  const productLabel = (row) => `${row.Product?.productName || row.productNameSnapshot || "Product"}${row.Product?.sku || row.sku ? ` (${row.Product?.sku || row.sku})` : ""}${row.variantName || row.variantNameSnapshot ? ` · ${row.variantName || row.variantNameSnapshot}` : ""}`;
+  const table = (rows, columns) => rows.length ? <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full min-w-[720px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>{columns.map((x) => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{rows}</tbody></table></div> : <Empty />;
 
-  const filteredSent = sent.filter((row) => {
-    if (filter === "ALL") return true;
-    if (filter === "PENDING") return ["REQUESTED", "MANAGER_APPROVED"].includes(row.status);
-    if (filter === "REJECTED") return ["MANAGER_REJECTED", "ADMIN_REJECTED"].includes(row.status);
-    return row.status === filter;
-  });
+  return <div className="space-y-5">
+    <Section title="Dealer Stock Exchange" actions={<Button variant="ghost" onClick={() => load()}><RefreshCw size={15} /> Refresh</Button>}>
+      <p className="text-sm text-slate-600">Only products listed in your exchange inventory are visible to other dealers. Move stock from main inventory to offer it for exchange.</p>
+      <div className="mt-4 flex flex-wrap gap-2">{nav.map(([id, label]) => <button key={id} onClick={() => setSection(id)} className={`rounded-lg px-3 py-2 text-sm font-bold ${section === id ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"}`}>{label}</button>)}</div>
+    </Section>
+    {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</div>}
 
-  return (
-    <div className="space-y-6">
-      <Section title="Search product by SKU">
-        <form onSubmit={search} className="flex flex-col gap-3 md:flex-row">
-          <TextField className="flex-1" label="SKU" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Enter product SKU" required />
-          <div className="flex items-end"><Button type="submit" disabled={loading}>{loading ? "Searching..." : "Search"}</Button></div>
-        </form>
-        {error && <div className="mt-4 rounded-md border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</div>}
-      </Section>
+    {section === "inventory" && <div className="grid gap-5 xl:grid-cols-2"><Section title="Main inventory · move into exchange">{table(mainInventory.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{productLabel(row)}</td><td className="px-4 py-3">{row.quantity}</td><td className="px-4 py-3"><div className="flex gap-2"><input aria-label="Quantity to list" type="number" min="1" max={row.quantity} value={moveQuantities[row.id] || ""} onChange={(e) => setMoveQuantities({ ...moveQuantities, [row.id]: e.target.value })} className="w-24 rounded-lg border px-2 py-1" placeholder="Qty" /><Button disabled={busy} onClick={() => moveToExchange(row)}>List for exchange</Button></div></td></tr>), ["Product", "Main stock", "Action"])}</Section>
+      <Section title="Exchange inventory · offered to dealers">{table(exchangeInventory.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{productLabel(row)}</td><td className="px-4 py-3">{row.quantity}</td><td className="px-4 py-3"><Button variant="ghost" onClick={() => removeFromExchange(row)}>Return to main inventory</Button></td></tr>), ["Product", "Exchange stock", "Action"])}</Section></div>}
 
-      {result?.product && (
-        <Section title="Product availability">
-          <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
-            <div className="rounded-md border border-slate-200 p-4">
-              {result.product.image && <img src={fileUrl(result.product.image)} alt={result.product.productName} className="mb-3 h-36 w-full rounded-md object-cover" />}
-              <p className="text-lg font-semibold text-slate-950">{productNameWithSku(result.product)}</p>
-              <p className="text-sm text-slate-500">SKU: {result.product.sku}</p>
-              <div className="mt-3"><UIStatusBadge value={result.product.isCompanyOutOfStock ? "Company Out of Stock" : `Company Stock ${result.product.companyStock}`} /></div>
-              <p className="mt-3 text-sm text-slate-600">{result.product.description || "No description available."}</p>
-            </div>
-            <div>
-              <h3 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Available dealers</h3>
-              {result.availableDealers?.length ? <div className="overflow-x-auto rounded-md border border-slate-200">
-                <table className="w-full min-w-[860px] text-left text-sm">
-                  <thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr>{["Dealer", "Location", "Variant", "Color", "SKU", "Available", "Action"].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}</tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {result.availableDealers.map((dealer) => <tr key={`${dealer.dealerId}-${dealer.productVariantId || "std"}`}>
-                      <td className="px-4 py-3"><p className="font-semibold text-slate-900">{dealer.dealerName}</p><p className="text-xs text-slate-500">{dealer.ownerName}</p></td>
-                      <td className="px-4 py-3">{[dealer.area, dealer.city, dealer.pincode].filter(Boolean).join(", ") || dealer.address || "-"}</td>
-                      <td className="px-4 py-3">{dealer.variantName || "-"}</td>
-                      <td className="px-4 py-3">{dealer.colorName || "-"}</td>
-                      <td className="px-4 py-3 font-mono text-xs">{fullSku(result.product, dealer)}</td>
-                      <td className="px-4 py-3 font-semibold text-slate-950">{dealer.availableQuantity}</td>
-                      <td className="px-4 py-3"><Button className="min-h-9 px-3 py-1.5 text-xs" onClick={() => { setRequestTarget({ ...dealer, sku: fullSku(result.product, dealer) }); setQuantity(""); setReason(""); }}>Request</Button></td>
-                    </tr>)}
-                  </tbody>
-                </table>
-              </div> : <Empty text="No other dealers have this product available" />}
-            </div>
-          </div>
-        </Section>
-      )}
+    {section === "search" && <Section title="Find a product in other dealers’ exchange inventory"><form onSubmit={search} className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><TextField label="Search by product name or SKU" value={term} onChange={(e) => { setTerm(e.target.value); setSelectedProduct(null); setResult(null); }} placeholder="e.g. HND125 or Honda Shine 125" required />{suggestions.length > 0 && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-lg">{suggestions.map((p) => <button type="button" key={p.id} onClick={() => { setSelectedProduct(p); setTerm(`${p.productName} (${p.sku})`); setSuggestions([]); }} className="block w-full px-3 py-2 text-left hover:bg-indigo-50"><span className="block font-semibold">{p.productName}</span><span className="font-mono text-xs text-indigo-700">SKU: {p.sku}</span></button>)}</div>}</div><div className="flex items-end"><Button type="submit" disabled={busy || !selectedProduct}>{busy ? "Searching…" : "Search"}</Button></div></form>
+      {result && <div className="mt-5">{result.availableDealers?.length ? table(result.availableDealers.map((d) => <tr key={`${d.dealerId}-${d.productVariantId || "std"}`}><td className="px-4 py-3 font-semibold">{d.dealerName}<p className="text-xs text-slate-500">{[d.area, d.city].filter(Boolean).join(", ")}</p></td><td className="px-4 py-3">{d.variantName || "Standard"} {d.colorName || ""}</td><td className="px-4 py-3 font-mono">{fullSku(result.product, d)}</td><td className="px-4 py-3 font-bold">{d.availableQuantity}</td><td className="px-4 py-3"><Button onClick={() => { setRequestTarget(d); setQuantity(""); }}>Request</Button></td></tr>), ["Dealer", "Variant", "SKU", "Available exchange stock", "Action"]) : <Empty text="No other dealer has this product listed for exchange." />}</div>}
+    </Section>}
 
-      <Section title="Request history" actions={<div className="flex flex-wrap gap-2"><button className={`rounded-md px-3 py-2 text-sm font-semibold ${historyTab === "sent" ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"}`} onClick={() => setHistoryTab("sent")}>Requests Sent</button><button className={`rounded-md px-3 py-2 text-sm font-semibold ${historyTab === "received" ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"}`} onClick={() => setHistoryTab("received")}>Stock Sent / Shared</button></div>}>
-        {historyTab === "sent" && <>
-          <div className="mb-4 flex flex-wrap gap-2">
-            {["ALL", "PENDING", "MANAGER_APPROVED", "TRANSFER_COMPLETED", "REJECTED", "CANCELLED"].map((value) => <button key={value} onClick={() => setFilter(value)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${filter === value ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>{value.replaceAll("_", " ")}</button>)}
-          </div>
-          <TransferRows rows={filteredSent} mode="sent" onCancel={cancel} />
-        </>}
-        {historyTab === "received" && <TransferRows rows={received} mode="received" onReminder={setReminderTarget} />}
-      </Section>
+    {section === "incoming" && <Section title="Exchange requests received">{table(incoming.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{productLabel(row)}</td><td className="px-4 py-3">{row.requesterDealer?.dealerName}</td><td className="px-4 py-3">{row.requestedQuantity}</td><td className="px-4 py-3"><UIStatusBadge value={row.status} /></td><td className="px-4 py-3">{row.status === "REQUESTED" && <div className="flex gap-2"><Button onClick={() => action(row.id, "accept")}>Accept</Button><Button variant="ghost" onClick={() => action(row.id, "reject")}>Reject</Button></div>}{row.status === "MANAGER_APPROVED" && <Button onClick={() => action(row.id, "dispatch")}>Dispatch stock</Button>}</td></tr>), ["Product", "Requesting dealer", "Quantity", "Status", "Action"])}</Section>}
 
-      {requestTarget && <StockExchangeRequestModal dealer={requestTarget} quantity={quantity} setQuantity={setQuantity} reason={reason} setReason={setReason} onClose={() => setRequestTarget(null)} onSubmit={submitRequest} />}
-      {reminderTarget && <ReturnReminderModal request={reminderTarget} onClose={() => setReminderTarget(null)} onSubmit={sendReminder} />}
-    </div>
-  );
+    {section === "sent" && <Section title="Requests sent">{table(sent.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{productLabel(row)}</td><td className="px-4 py-3">{row.senderDealer?.dealerName}</td><td className="px-4 py-3">{row.requestedQuantity}</td><td className="px-4 py-3"><UIStatusBadge value={row.status} />{row.status === "TRANSFER_COMPLETED" && <p className="mt-1 text-xs">{row.exchangeReceivedAt ? "Received" : "Awaiting receipt"}</p>}</td><td className="px-4 py-3">{row.status === "TRANSFER_COMPLETED" && !row.exchangeReceivedAt && <Button onClick={() => action(row.id, "receive")}>Received</Button>}{row.exchangeReceivedAt && Number(row.returnedQuantity || 0) < Number(row.requestedQuantity) && <Button variant="ghost" onClick={() => createReturn(row)}>Return to dealer</Button>}</td></tr>), ["Product", "Sending dealer", "Quantity", "Status", "Action"])}</Section>}
+
+    {section === "returns" && <Section title="Returns"><p className="mb-3 text-sm text-slate-600">Return requests are prepared from received exchange stock. Confirm incoming returns here to restore the original owner’s exchange balance.</p>{table(returns.map((row) => <tr key={row.id}><td className="px-4 py-3 font-semibold">{productLabel(row)}</td><td className="px-4 py-3">{row.senderDealer?.dealerName}</td><td className="px-4 py-3">{row.requestedQuantity}</td><td className="px-4 py-3"><UIStatusBadge value={row.exchangeReceivedAt ? "RETURN RECEIVED" : "RETURN IN TRANSIT"} /></td><td className="px-4 py-3">{!row.exchangeReceivedAt && <Button onClick={() => action(row.id, "receive-return")}>Confirm received</Button>}</td></tr>), ["Product", "Returning dealer", "Quantity", "Status", "Action"])}</Section>}
+
+      {requestTarget && <StockExchangeRequestModal dealer={requestTarget} quantity={quantity} setQuantity={setQuantity} reason={reason} setReason={setReason} onClose={() => setRequestTarget(null)} onSubmit={requestStock} />}
+  </div>;
 }
-
 function TransferRows({ rows = [], mode, onCancel, onReminder }) {
   if (!rows.length) return <Empty text="No transfer requests found" />;
   return <div className="overflow-x-auto rounded-md border border-slate-200"><table className="w-full min-w-[900px] text-left text-sm"><thead className="bg-slate-50 text-xs font-bold uppercase text-slate-500"><tr>{["Product + SKU", "Quantity", mode === "sent" ? "Sender dealer" : "Requester dealer", "Status", "Approvals", "Dates", "Action"].map((h) => <th key={h} className="px-4 py-3">{h}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{rows.map((row) => <tr key={row.id}><td className="px-4 py-3"><p className="font-semibold">{row.productNameSnapshot} ({row.sku || "-"})</p><p className="text-xs text-slate-500">{row.variantNameSnapshot ? `${row.variantNameSnapshot} / ${row.colorNameSnapshot || "-"}` : "Standard"}</p>{(row.managerRejectReason || row.adminRejectReason) && <p className="mt-1 text-xs font-semibold text-rose-600">{row.managerRejectReason || row.adminRejectReason}</p>}</td><td className="px-4 py-3 text-lg font-semibold text-slate-950">{row.requestedQuantity}</td><td className="px-4 py-3">{mode === "sent" ? row.senderDealer?.dealerName : row.requesterDealer?.dealerName}<p className="text-xs text-slate-500">{[mode === "sent" ? row.senderDealer?.area : row.requesterDealer?.area, mode === "sent" ? row.senderDealer?.city : row.requesterDealer?.city].filter(Boolean).join(", ")}</p></td><td className="px-4 py-3"><UIStatusBadge value={row.status} /></td><td className="px-4 py-3 text-xs text-slate-600">Manager: {row.managerApprovedAt ? formatDate(row.managerApprovedAt) : row.status === "MANAGER_REJECTED" ? "Rejected" : "Pending"}<br />Admin: {row.adminApprovedAt ? formatDate(row.adminApprovedAt) : row.status === "ADMIN_REJECTED" ? "Rejected" : "Pending"}</td><td className="px-4 py-3 text-xs text-slate-600">Created: {formatDate(row.createdAt)}<br />Completed: {formatDate(row.completedAt)}</td><td className="px-4 py-3">{mode === "sent" && row.status === "REQUESTED" ? <Button variant="ghost" className="min-h-9 px-3 py-1.5 text-xs" onClick={() => onCancel(row)}>Cancel</Button> : null}{mode === "received" && row.status === "TRANSFER_COMPLETED" ? <Button variant="soft" className="min-h-9 px-3 py-1.5 text-xs" onClick={() => onReminder(row)}>Send Reminder</Button> : null}</td></tr>)}</tbody></table></div>;
@@ -716,7 +703,7 @@ function StockCard({ stock, quantity, selection, setSelection, setQuantity, requ
     <div className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lg">
       <ImageWithFallback src={selectedVariant?.image || stock.Product?.image} alt={stock.Product?.productName} className="mb-3 h-36 w-full rounded-md object-cover" fallbackClassName="mb-3 h-36 w-full rounded-md" />
       <div className="flex items-start justify-between gap-2">
-        <div><p className="font-semibold">{productNameWithSku(stock.Product, selectedVariant)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(stock.Product, selectedVariant)}</p><p className="text-sm text-slate-500">{stock.Product?.category || "Uncategorized"} | {formatMoney(price)}</p></div>
+        <div><p className="font-bold text-slate-950">{productNameWithSku(stock.Product, selectedVariant)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(stock.Product, selectedVariant)}</p><p className="text-sm text-slate-500">{stock.Product?.category || "Uncategorized"} | {formatMoney(price)}</p></div>
         <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${empty ? "border-red-200 bg-red-50 text-red-700" : low ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
       </div>
       <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"><Star size={15} className="mr-1 inline" /> {stock.Product?.creditCoins || 0} credit coins per unit</div>
@@ -772,7 +759,7 @@ function DealerInventory({ rows = [], updateLowStockLimit, readOnly = false }) {
               <ImageWithFallback src={product.image} alt={product.productName} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div><p className="font-semibold text-slate-900">{productNameWithSku(product)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product)}</p><p className="text-sm text-slate-500">Total quantity: {group.total} | Low limit from {Number.isFinite(groupLimit) ? groupLimit : 0}</p></div>
+                  <div><p className="font-bold text-slate-950">{productNameWithSku(product)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product)}</p><p className="text-sm text-slate-500">Product quantity: <strong className="text-slate-800">{group.total} units</strong> | Low stock limit: {Number.isFinite(groupLimit) ? groupLimit : 0}</p></div>
                   <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${status === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : status === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
                 </div>
                 <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
@@ -782,7 +769,7 @@ function DealerInventory({ rows = [], updateLowStockLimit, readOnly = false }) {
                     const limit = Number(limits[item.id] ?? item.lowStockLimit ?? 0);
                     const variant = rowVariant(item);
                     const variantStatus = qty === 0 ? "Out of Stock" : qty <= limit ? "Low Stock" : "Available";
-                    return <div key={item.id} className="rounded-md bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold text-slate-900">{item.variantName || variant?.variantName || "Standard"} / {item.colorName || variant?.colorName || "-"}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product, variant)}</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700">{qty} qty</span><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${variantStatus === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : variantStatus === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{variantStatus}</span></div></div><div className="mt-3 flex flex-wrap items-end gap-2"><TextField label="Low stock limit" type="number" min="0" value={limit} onChange={(e) => setLimits({ ...limits, [item.id]: e.target.value })} disabled={readOnly} />{readOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={() => updateLowStockLimit(item.id, limit)}>Save Limit</Button>}</div></div>;
+                    return <div key={item.id} className="rounded-md bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold text-slate-900">{item.variantName || variant?.variantName || "Standard"} / {item.colorName || variant?.colorName || "-"}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product, variant)}</p></div><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-semibold text-slate-500">Variant quantity:</span><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700">{qty} units</span><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${variantStatus === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : variantStatus === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{variantStatus}</span></div></div><div className="mt-3 flex flex-wrap items-end gap-2"><TextField label="Low stock limit" type="number" min="0" value={limit} onChange={(e) => setLimits({ ...limits, [item.id]: e.target.value })} disabled={readOnly} />{readOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={() => updateLowStockLimit(item.id, limit)}>Save Limit</Button>}</div></div>;
                   })}</div>
                 </div>
               </div>
@@ -835,14 +822,19 @@ function DealerSales({ inventory = [], sales = [], form, setForm, onSubmit, filt
   );
 }
 
-function InternalUpdates({ data = {}, filter, setFilter, markRead, markAll }) {
+function InternalUpdates({ data = {}, filter, setFilter, markRead, markAll, clearRead }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
   const rows = data.rows || [];
   const filterMap = { unread: (n) => !n.isRead, read: (n) => n.isRead, low_stock: (n) => n.type === "LOW_STOCK" };
-  const visible = rows.filter(filterMap[filter] || (() => true));
+  const filtered = rows.filter(filterMap[filter] || (() => true));
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
   return (
-    <Section title="Internal Updates" actions={<Button variant="ghost" onClick={markAll}>Mark all as read</Button>}>
-      <div className="mb-4 flex flex-wrap gap-2">{["all", "unread", "read", "low_stock"].map((f) => <button key={f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === f ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{f.replaceAll("_", " ")}</button>)}</div>
-      {visible.length ? <div className="space-y-3">{visible.map((n) => <div key={n.id} className={`rounded-md border p-4 ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={() => markRead(n.id)}>Mark read</Button>}</div></div>)}</div> : <Empty text="No internal updates found" />}
+    <Section title="Internal Updates" actions={<div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={markAll}>Mark all as read</Button><Button variant="danger" onClick={clearRead}>Clear read updates</Button></div>}>
+      <div className="mb-4 flex flex-wrap gap-2">{["all", "unread", "read", "low_stock"].map((f) => <button key={f} onClick={() => { setFilter(f); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === f ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{f.replaceAll("_", " ")}</button>)}</div>
+      {visible.length ? <><div className="space-y-3">{visible.map((n) => <div key={n.id} className={`rounded-md border p-4 ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={() => markRead(n.id)}>Mark read</Button>}</div></div>)}</div><div className="mt-5 flex items-center justify-between border-t pt-4 text-sm"><span>Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length}</span><div className="flex gap-2"><Button variant="ghost" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>Previous</Button><span className="px-2 py-2">{safePage} / {totalPages}</span><Button variant="ghost" disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)}>Next</Button></div></div></> : <Empty text="No internal updates found" />}
     </Section>
   );
 }
@@ -897,19 +889,19 @@ function Table({ title, rows = [], cols, renderCell }) {
   return <Section title={title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={row.id || i} className="border-t border-slate-100">{cols.map((c) => <td className="p-3" key={c}>{renderCell ? renderCell(row, c) : String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div> : <Empty />}</Section>;
 }
 
-function Orders({ rows, filter, setFilter, search, setSearch }) {
+function Orders({ rows, filter, setFilter, search, setSearch, onCancel }) {
   const filtered = useMemo(() => rows.filter((order) => {
     const inDelivery = ["packing", "shipping", "out_for_delivery"].includes(order.status);
     const matchesFilter = filter === "all" || order.status === filter || (filter === "delivery" && inDelivery);
     const haystack = `${order.orderNumber} ${order.items?.map(itemLabelWithSku).join(" ")}`.toLowerCase();
     return matchesFilter && haystack.includes(search.toLowerCase());
   }), [rows, filter, search]);
-  return <Section title="My orders" actions={<input className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Search order/product" value={search} onChange={(e) => setSearch(e.target.value)} />}><div className="mb-4 flex flex-wrap gap-2">{["all", "pending", "approved", "delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => setFilter(status)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>{filtered.length ? <div className="space-y-4">{filtered.map((order) => <OrderCard key={order.id} order={order} />)}</div> : <Empty />}</Section>;
+  return <Section title="My orders" actions={<input className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Search order/product" value={search} onChange={(e) => setSearch(e.target.value)} />}><div className="mb-4 flex flex-wrap gap-2">{["all", "pending", "approved", "delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => setFilter(status)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>{filtered.length ? <div className="space-y-4">{filtered.map((order) => <OrderCard key={order.id} order={order} onCancel={onCancel} />)}</div> : <Empty />}</Section>;
 }
 
-function OrderCard({ order }) {
+function OrderCard({ order, onCancel }) {
   const summary = order.items?.map((i) => `${itemLabelWithSku(i)} x ${i.quantity}`).join(", ");
-  return <div className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:shadow-lg"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{summary || "Order"}</p><p className="text-sm text-slate-500">Order Date: {new Date(order.createdAt).toLocaleString()}</p><p className="mt-1 text-xs text-slate-400">Reference: {order.orderNumber}</p></div><div className="flex flex-wrap gap-2"><StatusBadge value={order.status} /><span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold">{formatMoney(order.totalAmount)}</span></div></div><DeliveryTimeline order={order} /><div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>Expected delivery: {order.deliveredDate || "-"}</span><Button variant="ghost">View Details</Button></div></div>;
+  return <div className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:shadow-lg"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{summary || "Order"}</p><p className="text-sm text-slate-500">Order Date: {new Date(order.createdAt).toLocaleString()}</p><p className="mt-1 text-xs text-slate-400">Reference: {order.orderNumber}</p></div><div className="flex flex-wrap gap-2"><StatusBadge value={order.status} /><span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold">{formatMoney(order.totalAmount)}</span></div></div><DeliveryTimeline order={order} /><div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>Expected delivery: {order.deliveredDate || "-"}</span>{order.status === "pending" && <Button variant="danger" onClick={() => onCancel(order)}>Cancel order</Button>}</div></div>;
 }
 
 function DeliveryBoard({ rows }) {

@@ -3,6 +3,19 @@ import { api } from "../api/client";
 
 const AuthContext = createContext(null);
 
+// Module-level promise so React StrictMode's mount→unmount→remount cycle
+// reuses the same in-flight request instead of firing a duplicate.
+let pendingMeRequest = null;
+
+function fetchMe() {
+  if (!pendingMeRequest) {
+    pendingMeRequest = api.get("/auth/me").finally(() => {
+      pendingMeRequest = null;
+    });
+  }
+  return pendingMeRequest;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const raw = localStorage.getItem("dms_user");
@@ -32,7 +45,7 @@ export function AuthProvider({ children }) {
     }
 
     let active = true;
-    api.get("/auth/me")
+    fetchMe()
       .then(({ data }) => {
         if (!active) return;
         localStorage.setItem("dms_user", JSON.stringify(data.user));

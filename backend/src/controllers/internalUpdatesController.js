@@ -60,3 +60,8 @@ exports.remove = asyncHandler(async (req, res) => {
   await notification.destroy();
   res.json({ message: "Notification deleted" });
 });
+
+exports.removeAllRead = asyncHandler(async (req, res) => {
+  const deleted = await InternalNotification.destroy({ where: { ...visibilityWhere(req.user), isRead: true } });
+  res.json({ deleted });
+});

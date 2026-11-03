@@ -126,6 +126,12 @@ const columns = {
     isRead: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
     updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW }
+  },
+  dealer_stock_transfer_requests: {
+    exchangeReceivedAt: { type: DataTypes.DATE, allowNull: true },
+    isReturn: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    parentTransferId: { type: DataTypes.INTEGER, allowNull: true },
+    returnedQuantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
   }
 };
 

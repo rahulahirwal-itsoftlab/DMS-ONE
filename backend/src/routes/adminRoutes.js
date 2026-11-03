@@ -16,8 +16,8 @@ const { licenseSystemEnabled } = require("../utils/featureFlags");
 const readRules = [
   { pattern: /^\/(?:dashboard|company|policies|dealers)(?:\/|$)/, roles: ADMIN_READ_ROLES },
   { pattern: /^\/(?:dealer-sales|dealer-performance|license-status|license-requests|reports)(?:\/|$)/, roles: ADMIN_DEALER_ROLES },
-  { pattern: /^\/(?:products|inventory|stock|orders|delivery|dealer-wise-stock|stock-transfer-requests)(?:\/|$)/, roles: ADMIN_PRODUCT_DELIVERY_ROLES },
-  { pattern: /^\/(?:finance|payments|invoices|dealer-wise-payment-list|credit)(?:\/|$)/, roles: ADMIN_FINANCE_ROLES },
+  { pattern: /^\/(?:products|inventory|stock|orders|delivery|dealer-wise-stock|stock-transfer-requests)(?:\/|$)/, roles: [...ADMIN_PRODUCT_DELIVERY_ROLES, "DEALER_MANAGER"] },
+  { pattern: /^\/(?:finance|payments|invoices|dealer-wise-payment-list|credit)(?:\/|$)/, roles: [...ADMIN_FINANCE_ROLES, "DEALER_MANAGER"] },
   { pattern: /^\/messages(?:\/|$)/, roles: ADMIN_READ_ROLES }
 ];
 
@@ -25,6 +25,7 @@ function adminSectionGuard(req, res, next) {
   if (hasAnyRole(req.user, ADMIN_OWNER_ROLES)) return next();
   const rule = readRules.find(({ pattern }) => pattern.test(req.path));
   if (rule && hasAnyRole(req.user, rule.roles) && req.method === "GET") return next();
+  if (req.user.role === "DEALER_MANAGER" && /^\/credit\/(?:rewards|redemptions|dealer-wallets)(?:\/|$)/.test(req.path) && ["GET"].includes(req.method)) return next();
 
   // Managers may perform work only inside their assigned operational section.
   if (hasAnyRole(req.user, ADMIN_DEALER_ROLES) && req.user.role === "DEALER_MANAGER" && /^\/(?:dealers|license-requests)(?:\/|$)/.test(req.path)) return next();

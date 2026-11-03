@@ -1,6 +1,6 @@
-  import { useEffect, useState } from "react";
+﻿  import { useEffect, useState } from "react";
 import { formatTitleCase } from "../utils/textFormatter";
-  import { AlertTriangle, CheckCircle2, Clock, Eye, EyeOff, Gift, IndianRupee, PackageCheck, Pencil, Star, Trash2, Truck, Users, X, Paperclip, Clock3, Banknote, CreditCard, AlertCircle } from "lucide-react";
+  import { AlertTriangle, CheckCircle2, Clock, Copy, Eye, EyeOff, Gift, IndianRupee, PackageCheck, Pencil, RefreshCw, Star, Trash2, Truck, Users, X, Paperclip, Clock3, Banknote, CreditCard, AlertCircle } from "lucide-react";
   import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
   import Layout from "../components/Layout";
   import { api, fileUrl } from "../api/client";
@@ -278,6 +278,12 @@ import { formatTitleCase } from "../utils/textFormatter";
       load(true);
     };
 
+    const clearReadUpdates = async () => {
+      if (!confirm("Delete all read internal updates? This cannot be undone.")) return;
+      await api.delete("/internal-updates/read-all");
+      load(true);
+    };
+
     if (loading) return <Layout title="Company Admin" subtitle="Company operations workspace" tabs={currentTabs} activeTab={activeTab} onTab={setActiveTab}><Loading /></Layout>;
 
     const dashboardCards = [
@@ -292,6 +298,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           eyebrow={String(user?.role || "Organization").replaceAll("_", " ")}
           title={currentTabs.find((tab) => tab.id === activeTab)?.label || "Dashboard"}
           description="Monitor organization operations, dealer performance, stock, orders, delivery and finance from one workspace."
+          actions={<Button variant="ghost" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh</Button>}
         />
         {loadError && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800 shadow-sm"><span>{loadError}</span><Button variant="ghost" onClick={load}>Retry</Button></div>}
         {activeTab === "dashboard" && (user?.role === "ADMIN_CEO" ? <AdminCeoReadOnlyOverview endpoint="/admin-ceo/dashboard" type="dashboard" /> : user?.role === "PRODUCT_DELIVERY_MANAGER" ? <ProductDeliveryManagerDashboard analytics={data.dashboard_analytics} products={data.products || []} orders={data.orders || []} dealerStock={data.stock_dealers || []} fallbackCards={dashboardCards} /> : user?.role === "FINANCE_MANAGER" ? <FinanceManagerDashboard analytics={data.dashboard_analytics} payments={data.finance_payments?.payments || []} stats={data.finance_payments?.stats || {}} fallbackCards={dashboardCards} /> : <AdminAnalytics analytics={data.dashboard_analytics} fallbackCards={dashboardCards} />)}
@@ -340,7 +347,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           <>
             <Section title="Create product" actions={<span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">SKU auto-generates after save</span>}>
               <FormGrid onSubmit={createProduct}>
-                {Object.keys(productForm).map((k) => <TextField key={k} label={k.replace(/([A-Z])/g, " $1")} value={productForm[k]} onChange={(e) => setProductForm({ ...productForm, [k]: e.target.value })} type={["price", "quantity", "lowStockLimit", "creditCoins"].includes(k) ? "number" : ["manufacturingDate", "expiryDate"].includes(k) ? "date" : "text"} min={["quantity", "lowStockLimit", "creditCoins"].includes(k) ? "0" : undefined} />)}
+              {Object.keys(productForm).map((k) => <TextField key={k} label={k === "quantity" ? "Opening quantity" : k.replace(/([A-Z])/g, " $1")} value={productForm[k]} onChange={(e) => setProductForm({ ...productForm, [k]: e.target.value })} type={["price", "quantity", "lowStockLimit", "creditCoins"].includes(k) ? "number" : ["manufacturingDate", "expiryDate"].includes(k) ? "date" : "text"} min={["quantity", "lowStockLimit", "creditCoins"].includes(k) ? "0" : undefined} />)}
                 <FileUploadPreview label="Product photo" preview={productPreview} accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; setProductImage(file || null); setProductPreview(file ? URL.createObjectURL(file) : ""); }} />
                 <div className="md:col-span-2">
                   <VariantEditor rows={variantRows} setRows={setVariantRows} />
@@ -365,11 +372,11 @@ import { formatTitleCase } from "../utils/textFormatter";
             <FinanceTable rows={data.finance_payments?.payments || []} dealers={data.dealers || []} filter={financeFilter} setFilter={setFinanceFilter} sendReminder={sendPaymentReminder} />
           </>
         )}
-        {activeTab === "creditManagement" && <CreditManagement data={data} form={rewardForm} setForm={setRewardForm} preview={rewardPreview} setPreview={setRewardPreview} setImage={setRewardImage} createReward={createReward} updateRedemption={updateRedemption} />}
+        {activeTab === "creditManagement" && <CreditManagement data={data} form={rewardForm} setForm={setRewardForm} preview={rewardPreview} setPreview={setRewardPreview} setImage={setRewardImage} createReward={createReward} updateRedemption={updateRedemption} reload={() => load(true)} />}
         {activeTab === "dealerSales" && <AdminDealerSales data={data["dealer-sales"]} dealers={data.dealers || []} products={data.products || []} />}
         {activeTab === "policies" && <Composer title="Policy & information" form={policyForm} setForm={setPolicyForm} submit={() => create("/admin/policies", policyForm, () => setPolicyForm({ ...policyForm, title: "", description: "" }))} rows={data.policies} cols={["title", "description", "visibleToDealers"]} />}
         {activeTab === "messages" && <AdminChat data={data.messages_conversations} form={messageForm} setForm={setMessageForm} sendMessage={sendMessage} />}
-        {activeTab === "internalUpdates" && <InternalUpdates data={data.internalUpdates} filter={internalFilter} setFilter={setInternalFilter} markRead={markUpdateRead} markAll={markAllUpdatesRead} openChat={(targetId) => { setChatTarget(targetId); setActiveTab("adminChat"); }} />}
+        {activeTab === "internalUpdates" && <InternalUpdates data={data.internalUpdates} filter={internalFilter} setFilter={setInternalFilter} markRead={markUpdateRead} markAll={markAllUpdatesRead} clearRead={clearReadUpdates} openChat={(targetId) => { setChatTarget(targetId); setActiveTab("adminChat"); }} />}
         {activeTab === "reports" && <SimpleTable title="Dealer reports and updates" rows={data.reports} cols={["title", "type", "description", "dealerId", "createdAt"]} />}
       </Layout>
     );
@@ -538,9 +545,8 @@ import { formatTitleCase } from "../utils/textFormatter";
     const [loading, setLoading] = useState(true);
     const load = async () => {
       setLoading(true);
-      const { data } = await api.get("/admin/stock-transfer-requests");
-      setPayload(data);
-      setLoading(false);
+      try { const { data } = await api.get("/admin/stock-transfer-requests"); setPayload(data); }
+      finally { setLoading(false); }
     };
     useEffect(() => { load(); }, []);
     const approve = async (row) => {
@@ -556,11 +562,10 @@ import { formatTitleCase } from "../utils/textFormatter";
     if (loading) return <Loading />;
     const cards = [
       ["Pending inter-dealer requests", payload.analytics.REQUESTED || 0],
-      ["Manager approved requests", payload.analytics.MANAGER_APPROVED || 0],
       ["Completed transfers", payload.analytics.TRANSFER_COMPLETED || 0],
       ["Rejected requests", (payload.analytics.MANAGER_REJECTED || 0) + (payload.analytics.ADMIN_REJECTED || 0)]
     ];
-    return <div className="space-y-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(([label, value]) => <Card key={label} label={label} value={value} />)}</div><TransferRequestTable rows={payload.rows || []} mode="manager" onApprove={approve} onReject={reject} /></div>;
+    return <div className="space-y-6"><div className="flex justify-end"><Button variant="ghost" onClick={load}><RefreshCw size={15} /> Refresh</Button></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards.map(([label, value]) => <Card key={label} label={label} value={value} />)}</div><TransferRequestTable rows={payload.rows || []} mode="manager" onApprove={approve} onReject={reject} /></div>;
   }
 
   function AdminCeoTransferApprovals() {
@@ -634,7 +639,7 @@ import { formatTitleCase } from "../utils/textFormatter";
   }
 
   function MiniList({ title, rows = [], left, right, prefix = "" }) {
-    return <Section title={title}>{rows.length ? <div className="space-y-2">{rows.map((row, i) => <div key={`${title}-${i}`} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2 text-sm"><span>{row[left] || "Unassigned"}</span><span className="font-semibold">{prefix}{row[right] ?? 0}</span></div>)}</div> : <Empty />}</Section>;
+    return <Section title={title}>{rows.length ? <div className="space-y-2">{rows.map((row, i) => <div key={`${title}-${i}`} className="flex items-center justify-between gap-3 rounded-md bg-slate-50 px-3 py-2 text-sm"><span className={left.toLowerCase().includes("product") ? "font-bold text-slate-900" : ""}>{row[left] || "Unassigned"}</span><span className="shrink-0 text-right">{prefix ? <strong className="font-semibold">{prefix}{row[right] ?? 0}</strong> : <><strong className="rounded bg-indigo-50 px-2 py-1 text-indigo-700">{row[right] ?? 0}</strong><span className="ml-1 text-xs text-slate-500">{right === "quantitySold" ? "units sold" : right === "quantity" ? "units" : ""}</span></>}</span></div>)}</div> : <Empty />}</Section>;
   }
 
   function Recent({ title, rows = [], primary, secondary }) {
@@ -660,15 +665,27 @@ import { formatTitleCase } from "../utils/textFormatter";
   }
 
   function fullVariantSku(product, variant) {
-    return [product.sku, variant.skuSuffix].filter(Boolean).join("-");
+    return [product.sku, variant.skuSuffix].filter(Boolean).join("-") || product.sku || "-";
+  }
+
+  function CopySku({ value }) {
+    const [copied, setCopied] = useState(false);
+    const copy = async (event) => {
+      event.stopPropagation();
+      try { await navigator.clipboard.writeText(value || ""); setCopied(true); setTimeout(() => setCopied(false), 1200); }
+      catch { alert("Could not copy SKU"); }
+    };
+    return <button type="button" aria-label={`Copy SKU ${value}`} title={copied ? "Copied" : "Copy SKU"} onClick={copy} className="ml-1 inline-grid h-6 w-6 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-700"><Copy size={12} /></button>;
   }
 
   function ProductTable({ rows, onEdit, onDelete }) {
     const [selected, setSelected] = useState(null);
+    const [skuCopied, setSkuCopied] = useState(null);
+    const copySku = async (event, sku) => { event.stopPropagation(); try { await navigator.clipboard.writeText(sku || ""); setSkuCopied(sku); setTimeout(() => setSkuCopied(null), 1200); } catch { alert("Could not copy SKU"); } };
     return (
       <>
         <Section title="Company stock">
-          {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Photo", "Product + SKU", "Category", "Description", "Price", "Quantity", "Variants with SKU", "Status", "Actions"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((p, index) => <tr className={`border-t border-slate-100 transition hover:bg-slate-50 ${index % 2 ? "bg-stone-50/70" : "bg-white"}`} key={p.id}><td className="p-3">{p.image ? <img src={fileUrl(p.image)} alt={p.productName} className="h-12 w-12 rounded-md object-cover" /> : <div className="h-12 w-12 rounded-md bg-slate-100" />}</td><td className="p-3"><button type="button" onClick={() => setSelected(p)} className="font-semibold text-indigo-700 hover:underline">{productNameWithSku(p)}</button><p className="mt-1 font-mono text-xs text-slate-500">Main SKU: {p.sku || "-"}</p><p className="mt-1 text-xs text-slate-500">{formatDate(p.manufacturingDate)} - {formatDate(p.expiryDate)}</p></td><td>{p.category || "-"}</td><td className="max-w-xs truncate">{p.description || "-"}</td><td>{formatMoney(p.price)}</td><td><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700">{p.quantity}</span></td><td className="max-w-sm"><div className="space-y-1">{(p.variants || []).map((v) => <div key={v.id || v.skuSuffix} className="rounded-md bg-slate-50 px-2 py-1"><span className="font-semibold">{v.variantName}/{v.colorName}</span><span className="ml-2 font-mono text-xs text-indigo-700">{fullVariantSku(p, v)}</span><span className="ml-2 text-xs text-slate-500">{v.stockQuantity} qty</span></div>) || "-"}</div></td><td><StatusBadge value={p.status} /></td><td><div className="flex flex-nowrap gap-1"><button className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50" onClick={() => onEdit(p)}>Edit</button><button className="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50" onClick={() => onDelete(p)}>Delete</button></div></td></tr>)}</tbody></table></div> : <Empty />}
+          {rows.length ? <div className="overflow-x-auto rounded-xl border border-slate-200"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500"><tr>{["Product name", "Main SKU", "Category", "Price", "Product quantity", "Variants and SKU", "Status", "Actions"].map((heading) => <th key={heading} className="px-4 py-3">{heading}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{rows.map((product) => <tr key={product.id} className="align-top hover:bg-slate-50"><td className="px-4 py-3"><button type="button" onClick={() => setSelected(product)} className="font-bold text-indigo-700 hover:underline">{product.productName}</button><p className="mt-1 text-xs text-slate-500">{formatDate(product.manufacturingDate)} – {formatDate(product.expiryDate)}</p></td><td className="px-4 py-3"><span className="font-mono text-xs font-semibold text-slate-700">{product.sku || "-"}</span><button type="button" onClick={(event) => copySku(event, product.sku)} title="Copy SKU" aria-label="Copy SKU" className="ml-2 inline-grid h-7 w-7 place-items-center rounded border border-slate-200 text-slate-500 hover:text-indigo-700"><Copy size={13} /></button>{skuCopied === product.sku && <span className="ml-1 text-xs text-emerald-700">Copied</span>}</td><td className="px-4 py-3">{product.category || "-"}</td><td className="px-4 py-3">{formatMoney(product.price)}</td><td className="px-4 py-3"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{product.quantity} units</span></td><td className="max-w-md px-4 py-3"><div className="space-y-2">{(product.variants || []).map((variant) => <div key={variant.id || variant.skuSuffix} className="rounded-lg bg-slate-50 p-2"><p className="font-semibold text-slate-900">{variant.variantName} / {variant.colorName || "-"}</p><p className="mt-1 flex items-center font-mono text-xs text-indigo-700">{fullVariantSku(product, variant)}<CopySku value={fullVariantSku(product, variant)} /></p><p className="mt-1 text-xs text-slate-500">Variant quantity: {variant.stockQuantity ?? 0} units</p></div>)}</div></td><td className="px-4 py-3"><StatusBadge value={product.status} /></td><td className="px-4 py-3"><div className="flex gap-1"><Button className="min-h-8 px-2 py-1 text-xs" onClick={() => onEdit(product)}>Edit</Button><Button variant="danger" className="min-h-8 px-2 py-1 text-xs" onClick={() => onDelete(product)}>Delete</Button></div></td></tr>)}</tbody></table></div> : <Empty />}
         </Section>
         {selected && <ProductDetailsModal product={selected} onClose={() => setSelected(null)} />}
       </>
@@ -847,7 +864,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     return <Section title={title}>{data.length ? <div className="h-72"><ResponsiveContainer><PieChart><Pie data={data} dataKey="count" nameKey={name} outerRadius={90} label>{data.map((entry, index) => <Cell key={entry[name]} fill={["#2563EB", "#10B981", "#F59E0B", "#EF4444", "#64748B"][index % 5]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div> : <Empty />}</Section>;
   }
 
-  function CreditManagement({ data, form, setForm, preview, setPreview, setImage, createReward, updateRedemption }) {
+  function CreditManagement({ data, form, setForm, preview, setPreview, setImage, createReward, updateRedemption, reload }) {
     const summary = data.credit_summary || {};
     const rewards = data.credit_rewards || [];
     const redemptions = data.credit_redemptions || [];
@@ -880,7 +897,7 @@ import { formatTitleCase } from "../utils/textFormatter";
         return text.replace(/\b\w/g, (letter) => letter.toUpperCase());
       }
     };
-    return <Section title={typeof title === 'string' ? formatTitleCase(title) : title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{columnLabel(c)}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr className={`border-t border-slate-100 ${i % 2 ? "bg-stone-50/70" : "bg-white"} hover:bg-slate-50`} key={row.id || i}>{cols.map((c) => <td className="p-3" key={c}>{renderCell ? renderCell(row, c) : String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div> : <Empty />}</Section>;
+    return <Section title={typeof title === 'string' ? formatTitleCase(title) : title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{columnLabel(c)}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr className={`border-t border-slate-100 ${i % 2 ? "bg-stone-50/70" : "bg-white"} hover:bg-slate-50`} key={row.id || i}>{cols.map((c) => <td className="p-3" key={c}>{renderCell ? renderCell(row, c) : c === "quantity" || c === "quantitySold" || c === "stockQuantity" ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{row[c] ?? 0}</span><span className="text-xs text-slate-500">{c === "quantitySold" ? "sold" : "units"}</span></span> : c === "product" || c === "productName" ? <span className="font-bold text-slate-900">{String(row[c] ?? "-")}</span> : String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div> : <Empty />}</Section>;
   }
 
   function AdminDealerSales({ data = {} }) {
@@ -904,10 +921,15 @@ import { formatTitleCase } from "../utils/textFormatter";
     );
   }
 
-  function InternalUpdates({ data = {}, filter, setFilter, markRead, markAll, openChat }) {
+  function InternalUpdates({ data = {}, filter, setFilter, markRead, markAll, clearRead, openChat }) {
+    const [page, setPage] = useState(1);
+    const pageSize = 10;
     const rows = data.rows || [];
     const filterMap = { unread: (n) => !n.isRead, read: (n) => n.isRead, low_stock: (n) => n.type === "LOW_STOCK" };
-    const visible = rows.filter(filterMap[filter] || (() => true));
+    const filtered = rows.filter(filterMap[filter] || (() => true));
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
     
     const handleNotificationClick = (n) => {
       if (n.title === "New Team Message" || n.title === "New Personal Message") {
@@ -917,9 +939,9 @@ import { formatTitleCase } from "../utils/textFormatter";
     };
     
     return (
-      <Section title="Internal Updates" actions={<Button variant="ghost" onClick={markAll}>Mark all as read</Button>}>
-        <div className="mb-4 flex flex-wrap gap-2">{["all", "unread", "read", "low_stock"].map((f) => <button key={f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === f ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{f.replaceAll("_", " ")}</button>)}</div>
-        {visible.length ? <div className="space-y-3">{visible.map((n) => <div key={n.id} onClick={() => handleNotificationClick(n)} className={`rounded-md border p-4 cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><NotificationMeta notification={n} /><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={(e) => { e.stopPropagation(); markRead(n.id); }}>Mark read</Button>}</div></div>)}</div> : <Empty text="No internal updates found" />}
+      <Section title="Internal Updates" actions={<div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={markAll}>Mark all as read</Button><Button variant="danger" onClick={clearRead}>Clear read updates</Button></div>}>
+        <div className="mb-4 flex flex-wrap gap-2">{["all", "unread", "read", "low_stock"].map((f) => <button key={f} onClick={() => { setFilter(f); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === f ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{f.replaceAll("_", " ")}</button>)}</div>
+        {visible.length ? <><div className="space-y-3">{visible.map((n) => <div key={n.id} onClick={() => handleNotificationClick(n)} className={`rounded-md border p-4 cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><NotificationMeta notification={n} /><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={(e) => { e.stopPropagation(); markRead(n.id); }}>Mark read</Button>}</div></div>)}</div><div className="mt-5 flex items-center justify-between border-t pt-4 text-sm"><span>Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length}</span><div className="flex gap-2"><Button variant="ghost" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>Previous</Button><span className="px-2 py-2">{safePage} / {totalPages}</span><Button variant="ghost" disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)}>Next</Button></div></div></> : <Empty text="No internal updates found" />}
       </Section>
     );
   }
@@ -968,7 +990,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                   {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-20 w-24 rounded-xl object-cover" /> : <div className="grid h-20 w-24 place-items-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-400">No image</div>}
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-bold text-slate-950 group-hover:text-indigo-700">{productNameWithSku(product)}</p>
-                    <p className="mt-1 truncate font-mono text-xs text-indigo-700">SKU: {product.sku || "-"}</p>
+                    <p className="mt-1 flex items-center truncate font-mono text-xs text-indigo-700"><span>SKU: {product.sku || "-"}</span><CopySku value={product.sku} /></p>
                     <p className="mt-1 text-xs text-slate-500">{product.category || "Uncategorized"}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2"><StatusBadge value={stockStatus} /><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{qty} in company stock</span></div>
                   </div>
@@ -1015,7 +1037,7 @@ import { formatTitleCase } from "../utils/textFormatter";
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="font-semibold text-slate-900">{productNameWithSku(product)}</p>
-            <p className="text-xs text-slate-500">Main SKU {product.sku || "-"} | Limit {limit}</p>
+            <p className="text-xs text-slate-500">Main SKU <span className="font-mono">{product.sku || "-"}</span><CopySku value={product.sku} /> | Low stock limit {limit}</p>
           </div>
           <StatusBadge value={low ? "low" : "active"} />
         </div>
@@ -1100,6 +1122,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     const statValue = (key, value) => moneyKeys.some((item) => key.toLowerCase().includes(item.toLowerCase())) ? formatMoney(value) : value;
     return (
       <div className="space-y-6">
+        <div className="flex justify-end"><Button variant="ghost" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh</Button></div>
         {!['dashboard', 'dealers', 'products', 'orders', 'delivery', 'finance', 'credit'].includes(type) && statRows.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {statRows.map(([key, value]) => <Card key={key} label={key.replace(/([A-Z])/g, " $1")} value={statValue(key, value)} />)}
@@ -1107,7 +1130,7 @@ import { formatTitleCase } from "../utils/textFormatter";
         )}
         {type === "dashboard" && <AdminCeoAnalyticsDashboard payload={payload} />}
         {type === "dealers" && <AdminCeoDealersOverview payload={payload} onControlDealer={controlDealer} />}
-        {type === "products" && <AdminCeoProductsOverview payload={payload} onControlProduct={controlProduct} />}
+        {type === "products" && <AdminCeoProductsOverview payload={payload} onControlProduct={controlProduct} onRefresh={load} />}
         {type === "orders" && <AdminCeoOrdersOverview payload={payload} />}
         {type === "delivery" && <AdminCeoDeliveryOverview payload={payload} />}
         {type === "finance" && <AdminCeoFinanceOverview payload={payload} />}

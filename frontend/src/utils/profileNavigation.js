@@ -1,10 +1,7 @@
 const dealerStockExchangeEnabled = import.meta.env.VITE_ENABLE_DEALER_STOCK_EXCHANGE !== "false";
 const dealerStockExchangeTab = dealerStockExchangeEnabled ? [{ id: "dealerStockExchange", label: "Dealer Stock Exchange", icon: "inventory" }] : [];
-const adminInterDealerTab = dealerStockExchangeEnabled ? [{ id: "interDealerRequests", label: "Inter-Dealer Requests", icon: "inventory" }] : [];
-const adminCeoTransferTabs = dealerStockExchangeEnabled ? [
-  { id: "transferApprovals", label: "Transfer Approvals", icon: "inventory" },
-  { id: "transferHistory", label: "Transfer History", icon: "reports" }
-] : [];
+const adminInterDealerTab = [];
+const adminCeoTransferTabs = [];
 
 export const roleRoutes = {
   SUPER_ADMIN: "/super-admin/dashboard",
@@ -93,7 +90,6 @@ export const roleTabs = {
     { id: "managers", label: "Managers", icon: "dealers" },
     { id: "stock", label: "Available Stock", icon: "inventory" },
     { id: "inventory", label: "My Inventory", icon: "products" },
-    ...dealerStockExchangeTab,
     { id: "sales", label: "Sales", icon: "reports" },
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
@@ -109,7 +105,6 @@ export const roleTabs = {
     { id: "managers", label: "Managers", icon: "dealers" },
     { id: "stock", label: "Available Company Stock", icon: "inventory" },
     { id: "inventory", label: "My Inventory", icon: "products" },
-    ...dealerStockExchangeTab,
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
     { id: "sales", label: "Sales", icon: "reports" },
@@ -124,7 +119,6 @@ export const roleTabs = {
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "stock", label: "Available Company Stock", icon: "inventory" },
     { id: "inventory", label: "My Inventory", icon: "products" },
-    ...dealerStockExchangeTab,
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
     { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
@@ -134,7 +128,7 @@ export const roleTabs = {
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "stock", label: "Available Company Stock", icon: "inventory" },
     { id: "inventory", label: "My Inventory", icon: "products" },
-    ...dealerStockExchangeTab,
+    ...(dealerStockExchangeEnabled ? dealerStockExchangeTab : []),
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
     { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },

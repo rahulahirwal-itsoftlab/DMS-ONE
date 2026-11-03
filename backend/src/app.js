@@ -55,9 +55,7 @@ if (superAdminManagerRolesEnabled()) {
     res.status(410).json({ message: "This Super Admin manager feature is no longer active." });
   });
 }
-app.use("/api/admin/stock-transfer-requests", require("./routes/stockTransferAdminRoutes"));
 app.use("/api/admin", require("./routes/adminRoutes"));
-app.use("/api/admin-ceo/stock-transfer-requests", require("./routes/stockTransferAdminCeoRoutes"));
 app.use("/api/admin-ceo", require("./routes/adminCeoRoutes"));
 app.use("/api/admin-internal-chat", require("./routes/adminInternalChatRoutes"));
 app.use("/api/dealer", require("./routes/dealerRoutes"));

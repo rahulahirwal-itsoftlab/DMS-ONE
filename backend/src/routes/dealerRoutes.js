@@ -19,6 +19,7 @@ router.get("/dashboard", ctrl.dashboard);
 router.get("/stock", permit(...stockRoles), ctrl.availableStock);
 router.post("/orders", permit(...stockRoles), blockDealerCeoAssignedWork, ctrl.createOrder);
 router.get("/orders", permit(...stockRoles), ctrl.orders);
+router.patch("/orders/:id/cancel", permit(...stockRoles), ctrl.cancelOrder);
 router.get("/delivery", permit(...stockRoles), ctrl.delivery);
 router.get("/inventory", permit(...stockRoles, "DEALER_SALES_FINANCE_MANAGER"), ctrl.inventory);
 router.patch("/inventory/:id", permit(...stockRoles), blockDealerCeoAssignedWork, ctrl.updateInventory);

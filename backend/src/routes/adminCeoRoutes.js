@@ -4,12 +4,12 @@ const { protect, permit } = require("../middleware/auth");
 
 router.use(protect, permit("ADMIN", "ADMIN_CEO", "DEALER_MANAGER", "PRODUCT_DELIVERY_MANAGER", "FINANCE_MANAGER"));
 router.get("/dashboard", permit("ADMIN", "ADMIN_CEO"), ctrl.dashboard);
-router.get("/dealers-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.dealersOverview);
-router.get("/product-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.productOverview);
-router.get("/order-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.orderOverview);
-router.get("/delivery-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.deliveryOverview);
-router.get("/finance-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.financeOverview);
-router.get("/credit-overview", permit("ADMIN", "ADMIN_CEO"), ctrl.creditOverview);
+router.get("/dealers-overview", permit("ADMIN", "ADMIN_CEO", "DEALER_MANAGER"), ctrl.dealersOverview);
+router.get("/product-overview", permit("ADMIN", "ADMIN_CEO", "PRODUCT_DELIVERY_MANAGER"), ctrl.productOverview);
+router.get("/order-overview", permit("ADMIN", "ADMIN_CEO", "PRODUCT_DELIVERY_MANAGER"), ctrl.orderOverview);
+router.get("/delivery-overview", permit("ADMIN", "ADMIN_CEO", "PRODUCT_DELIVERY_MANAGER"), ctrl.deliveryOverview);
+router.get("/finance-overview", permit("ADMIN", "ADMIN_CEO", "FINANCE_MANAGER"), ctrl.financeOverview);
+router.get("/credit-overview", permit("ADMIN", "ADMIN_CEO", "FINANCE_MANAGER", "DEALER_MANAGER"), ctrl.creditOverview);
 router.get("/managers", permit("ADMIN", "ADMIN_CEO"), ctrl.managers);
 router.get("/manager-exists", permit("ADMIN", "ADMIN_CEO"), ctrl.managerExists);
 router.post("/managers", permit("ADMIN", "ADMIN_CEO"), ctrl.createManager);

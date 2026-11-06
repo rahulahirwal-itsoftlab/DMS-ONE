@@ -20,6 +20,8 @@ const User = sequelize.define("User", {
   forgotPasswordOtpExpiry: { type: DataTypes.DATE, allowNull: true },
   passwordChangeRequired: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
   passwordChangedAt: { type: DataTypes.DATE, allowNull: true },
+  avatar: { type: DataTypes.STRING, allowNull: true },
+  avatarPublicId: { type: DataTypes.STRING, allowNull: true },
   status: { type: DataTypes.ENUM("active", "inactive"), defaultValue: "active" }
 }, {
   hooks: {
@@ -48,6 +50,8 @@ const Company = sequelize.define("Company", {
   numberOfLicenses: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   paymentStatus: { type: DataTypes.ENUM("PENDING", "PAID", "REJECTED"), allowNull: false, defaultValue: "PAID" },
   subscriptionAmount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+  logo: { type: DataTypes.STRING, allowNull: true },
+  logoPublicId: { type: DataTypes.STRING, allowNull: true },
   approvedByFinance: { type: DataTypes.INTEGER, allowNull: true },
   financeApprovedAt: { type: DataTypes.DATE, allowNull: true },
   createdBySalesManager: { type: DataTypes.INTEGER, allowNull: true },
@@ -192,6 +196,7 @@ const Product = sequelize.define("Product", {
   creditCoins: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   variantEnabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   image: DataTypes.STRING,
+  imagePublicId: { type: DataTypes.STRING, allowNull: true },
   status: { type: DataTypes.ENUM("active", "inactive"), defaultValue: "active" }
 });
 
@@ -204,6 +209,7 @@ const ProductVariant = sequelize.define("ProductVariant", {
   priceOverride: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
   skuSuffix: { type: DataTypes.STRING, allowNull: true },
   image: { type: DataTypes.STRING, allowNull: true },
+  imagePublicId: { type: DataTypes.STRING, allowNull: true },
   status: { type: DataTypes.ENUM("active", "inactive"), defaultValue: "active" }
 }, { tableName: "product_variants" });
 
@@ -460,6 +466,7 @@ const CreditReward = sequelize.define("CreditReward", {
   requiredCoins: { type: DataTypes.INTEGER, allowNull: false },
   quantity: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   image: { type: DataTypes.STRING, allowNull: true },
+  imagePublicId: { type: DataTypes.STRING, allowNull: true },
   category: { type: DataTypes.STRING, allowNull: true },
   status: { type: DataTypes.ENUM("active", "inactive"), defaultValue: "active" },
   terms: { type: DataTypes.TEXT, allowNull: true }
@@ -482,6 +489,8 @@ Company.hasMany(Dealer, { foreignKey: "companyId" });
 Dealer.belongsTo(Company, { foreignKey: "companyId" });
 Company.hasMany(User, { foreignKey: "companyId" });
 User.belongsTo(Company, { foreignKey: "companyId" });
+Dealer.hasMany(User, { foreignKey: "dealerId" });
+User.belongsTo(Dealer, { foreignKey: "dealerId" });
 Company.hasMany(CompanyLicense, { foreignKey: "companyId" });
 CompanyLicense.belongsTo(Company, { foreignKey: "companyId" });
 LicensePlan.hasMany(LicenseInventory, { foreignKey: "licensePlanId" });

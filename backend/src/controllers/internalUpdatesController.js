@@ -37,8 +37,12 @@ exports.list = asyncHandler(async (req, res) => {
   const where = visibilityWhere(req.user);
   if (req.query.unread === "true") where.isRead = false;
   if (req.query.type) where.type = req.query.type;
-  const rows = await InternalNotification.findAll({ where, order: [["createdAt", "DESC"]] });
-  const unreadCount = await InternalNotification.count({ where: { ...visibilityWhere(req.user), isRead: false } });
+  const limit = Math.min(Number(req.query.limit || 50), 200);
+
+  const [rows, unreadCount] = await Promise.all([
+    InternalNotification.findAll({ where, order: [["createdAt", "DESC"]], limit }),
+    InternalNotification.count({ where: { ...visibilityWhere(req.user), isRead: false } })
+  ]);
   res.json({ rows, unreadCount });
 });
 

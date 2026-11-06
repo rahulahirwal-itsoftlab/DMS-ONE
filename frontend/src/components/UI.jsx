@@ -430,12 +430,31 @@ export function ConfirmModal({ open, title, description, confirmText = "Confirm"
   );
 }
 
-export function FileUploadPreview({ label = "Upload file", preview, accept, onChange }) {
+export function FileUploadPreview({ label = "Upload file", preview, accept, onChange, uploading = false }) {
   return (
-    <label className="block rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 transition hover:border-indigo-300 hover:bg-indigo-50/40">
+    <label className="relative block rounded-md border border-dashed border-slate-300 bg-slate-50 p-4 transition hover:border-indigo-300 hover:bg-indigo-50/40 cursor-pointer">
       <span className="flex items-center gap-2 text-sm font-semibold text-slate-700"><UploadCloud size={17} /> {label}</span>
-      <input className="sr-only" type="file" accept={accept} onChange={onChange} />
-      {preview ? <img src={preview} alt="Preview" className="mt-3 h-28 w-28 rounded-md object-cover" /> : <p className="mt-2 text-xs text-slate-500">Choose a file to preview before saving.</p>}
+      <input className="sr-only" type="file" accept={accept} onChange={onChange} disabled={uploading} />
+      {uploading ? (
+        <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-indigo-600">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
+          Uploading image...
+        </div>
+      ) : preview ? (
+        <div className="relative mt-3 inline-block">
+          <img
+            src={preview}
+            alt="Preview"
+            className="h-28 w-28 rounded-md object-cover border border-slate-200 shadow-xs"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+          <span className="mt-1 block text-[11px] font-medium text-slate-500">Selected image (click to change)</span>
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">Choose a file to preview before saving (JPG, PNG, WebP up to 10MB).</p>
+      )}
     </label>
   );
 }

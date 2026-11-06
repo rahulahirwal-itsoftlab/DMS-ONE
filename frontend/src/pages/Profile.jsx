@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff, KeyRound, Lock, Mail, Save, ShieldCheck, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
 import Layout from "../components/Layout";
-import { api } from "../api/client";
+import { api, fileUrl } from "../api/client";
 import { Button, Loading, PageHeader, SectionCard, StatusBadge, TextField, formatDate } from "../components/UI";
 import { useAuth } from "../state/AuthContext";
 import { roleRoutes, roleTabs } from "../utils/profileNavigation";
@@ -170,7 +170,11 @@ export default function Profile() {
       <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
         <SectionCard title="User information">
           <div className="text-center">
-            <div className="mx-auto grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-2xl font-bold text-white shadow-lg shadow-indigo-200">{initials}</div>
+            {profile.user?.avatar ? (
+              <img src={fileUrl(profile.user.avatar)} alt={profile.user?.name} className="mx-auto h-20 w-20 rounded-2xl object-cover shadow-lg" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+            ) : (
+              <div className="mx-auto grid h-20 w-20 place-items-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-2xl font-bold text-white shadow-lg shadow-indigo-200">{initials}</div>
+            )}
             <h2 className="mt-4 text-xl font-semibold text-slate-950">{profile.user?.name}</h2>
             <p className="mt-1 text-sm text-slate-500">{profile.user?.email}</p>
             <div className="mt-3 flex justify-center"><StatusBadge value={profile.user?.role} /></div>

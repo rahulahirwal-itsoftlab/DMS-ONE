@@ -5,12 +5,23 @@ const dialect = process.env.DB_DIALECT || "mysql";
 const commonOptions = {
   dialect,
   logging: false,
-  define: { underscored: false }
+  define: { underscored: false },
+  pool: {
+    max: Number(process.env.DB_POOL_MAX || 20),
+    min: Number(process.env.DB_POOL_MIN || 5),
+    acquire: Number(process.env.DB_POOL_ACQUIRE || 30000),
+    idle: Number(process.env.DB_POOL_IDLE || 10000)
+  }
 };
 
 if (dialect === "postgres") {
   commonOptions.dialectOptions = {
     ssl: process.env.DB_SSL === "false" ? false : { require: true, rejectUnauthorized: false }
+  };
+} else if (dialect === "mysql") {
+  commonOptions.dialectOptions = {
+    connectTimeout: 10000,
+    decimalNumbers: true
   };
 }
 

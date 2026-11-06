@@ -1,5 +1,5 @@
 import { Component, useEffect, useMemo, useState } from "react";
-import { Gift, Star, Eye, EyeOff, X, Pencil, RefreshCw, Trash2 } from "lucide-react";
+import { Gift, Star, Eye, EyeOff, X, Pencil, RefreshCw, Trash2, Copy, Check } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Layout from "../components/Layout";
 import { api, fileUrl } from "../api/client";
@@ -21,6 +21,42 @@ const itemLabelWithSku = (item) => {
   return `${product.productName || "Product"}${variantText} [${fullSku(product, variant)}]`;
 };
 
+function CopySku({ value }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async (event) => {
+    event?.stopPropagation?.();
+    try {
+      await navigator.clipboard.writeText(value || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      alert("Could not copy SKU");
+    }
+  };
+  return (
+    <button
+      type="button"
+      aria-label={`Copy SKU ${value}`}
+      title={copied ? "Copied" : "Copy SKU"}
+      onClick={copy}
+      className="inline-grid h-6 w-6 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-700 transition shrink-0"
+    >
+      {copied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+    </button>
+  );
+}
+
+function CompactSku({ value }) {
+  const sku = String(value || "-");
+  const preview = sku.length > 14 ? `${sku.slice(0, 7)}…${sku.slice(-4)}` : sku;
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku}`}>
+      <span className="truncate">{preview}</span>
+      <CopySku value={value} />
+    </span>
+  );
+}
+
 const tabs = [
   { id: "dashboard", label: "Dashboard", icon: "dashboard" },
   { id: "stock", label: "Available Company Stock", icon: "inventory" },
@@ -31,7 +67,7 @@ const tabs = [
   { id: "finance", label: "Finance", icon: "finance" },
   { id: "creditStore", label: "Credit Store", icon: "credits" },
   { id: "messages", label: "Messages", icon: "messages" },
-  { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+  { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
   { id: "policies", label: "Policies", icon: "policies" },
   { id: "reports", label: "Send Report", icon: "reports" }
 ];
@@ -699,28 +735,109 @@ function StockCard({ stock, quantity, selection, setSelection, setQuantity, requ
   const low = availableQuantity <= Number(stock.lowStockLimit || 10);
   const empty = availableQuantity === 0;
   const status = empty ? "Out of Stock" : low ? "Low Stock" : "Available";
+  const currentSku = fullSku(stock.Product, selectedVariant);
+
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lg">
-      <ImageWithFallback src={selectedVariant?.image || stock.Product?.image} alt={stock.Product?.productName} className="mb-3 h-36 w-full rounded-md object-cover" fallbackClassName="mb-3 h-36 w-full rounded-md" />
-      <div className="flex items-start justify-between gap-2">
-        <div><p className="font-bold text-slate-950">{productNameWithSku(stock.Product, selectedVariant)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(stock.Product, selectedVariant)}</p><p className="text-sm text-slate-500">{stock.Product?.category || "Uncategorized"} | {formatMoney(price)}</p></div>
-        <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${empty ? "border-red-200 bg-red-50 text-red-700" : low ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft transition hover:-translate-y-0.5 hover:shadow-lg flex flex-col justify-between">
+      <div>
+        <ImageWithFallback src={selectedVariant?.image || stock.Product?.image} alt={stock.Product?.productName} className="mb-3 h-40 w-full rounded-lg object-cover" fallbackClassName="mb-3 h-40 w-full rounded-lg" />
+        
+        {/* Header: Clean Product Name & Status */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Product</p>
+            <h3 className="font-bold text-slate-950 text-base leading-snug truncate" title={stock.Product?.productName}>
+              {stock.Product?.productName || "Product"}
+            </h3>
+            {stock.Product?.category && (
+              <span className="mt-0.5 inline-block text-xs text-slate-500 font-medium">
+                Category: {stock.Product.category}
+              </span>
+            )}
+          </div>
+          <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${empty ? "border-red-200 bg-red-50 text-red-700" : low ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
+        </div>
+
+        {/* Labeled SKU Box with half-hidden preview and copy button */}
+        <div className="mt-3 flex items-center justify-between rounded-lg border border-indigo-100 bg-indigo-50/70 px-3 py-2">
+          <span className="text-xs font-bold uppercase tracking-wide text-indigo-900">SKU Code:</span>
+          <CompactSku value={currentSku} />
+        </div>
+
+        {/* Prominently Separated and Labeled Price & Available Stock */}
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Unit Price</p>
+            <p className="mt-0.5 text-base font-extrabold text-slate-900">{formatMoney(price)}</p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Available Stock</p>
+            <p className={`mt-0.5 text-base font-extrabold ${empty ? "text-red-600" : low ? "text-amber-600" : "text-emerald-700"}`}>
+              {availableQuantity} <span className="text-xs font-semibold">units</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Credit coins badge */}
+        <div className="mt-2.5 flex items-center justify-between rounded-lg bg-amber-50 border border-amber-200/80 px-3 py-1.5 text-xs font-semibold text-amber-800">
+          <span><Star size={14} className="mr-1 inline text-amber-600 fill-amber-500" /> Reward Coins:</span>
+          <span className="font-bold">{stock.Product?.creditCoins || 0} coins / unit</span>
+        </div>
+
+        {/* Variant Selectors if any */}
+        {variants.length > 0 && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Select Variant</span>
+              <select className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium" value={selectedVariantName} onChange={(e) => { const next = variants.find((v) => v.variantName === e.target.value); setSelection({ variantName: e.target.value, productVariantId: next?.id, variant: next }); }}>
+                <option value="">Select variant</option>
+                {variantNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-bold uppercase text-slate-500">Select Color</span>
+              <select className="mt-1 w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium" value={selectedVariant?.id || ""} onChange={(e) => { const next = variants.find((v) => String(v.id) === e.target.value); setSelection({ variantName: next?.variantName, productVariantId: next?.id, variant: next }); }}>
+                <option value="">Select color</option>
+                {colors.map((v) => <option key={v.id} value={v.id}>{v.colorName} ({fullSku(stock.Product, v)})</option>)}
+              </select>
+            </label>
+          </div>
+        )}
+
+        {/* All variants with SKU breakdown */}
+        {variants.length > 0 && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">Variant Breakdown ({variants.length})</p>
+            <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+              {variants.map((variant) => (
+                <div key={variant.id || variant.skuSuffix} className="flex flex-wrap items-center justify-between gap-1.5 rounded-md border border-slate-200/80 bg-white px-2 py-1 text-xs">
+                  <span className="font-semibold text-slate-800">{variant.variantName} / {variant.colorName || "-"}</span>
+                  <div className="flex items-center gap-2">
+                    <CompactSku value={fullSku(stock.Product, variant)} />
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-bold text-slate-700 text-[11px]">{variant.stockQuantity ?? 0} qty</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {stock.Product?.description && <p className="mt-2.5 line-clamp-2 text-xs leading-5 text-slate-600">{stock.Product.description}</p>}
+        {stock.description && <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-500">{stock.description}</p>}
       </div>
-      <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"><Star size={15} className="mr-1 inline" /> {stock.Product?.creditCoins || 0} credit coins per unit</div>
-      {variants.length > 0 && <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <label className="block"><span className="text-sm font-medium text-slate-600">Variant</span><select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" value={selectedVariantName} onChange={(e) => { const next = variants.find((v) => v.variantName === e.target.value); setSelection({ variantName: e.target.value, productVariantId: next?.id, variant: next }); }}><option value="">Select variant</option>{variantNames.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-        <label className="block"><span className="text-sm font-medium text-slate-600">Color / SKU</span><select className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" value={selectedVariant?.id || ""} onChange={(e) => { const next = variants.find((v) => String(v.id) === e.target.value); setSelection({ variantName: next?.variantName, productVariantId: next?.id, variant: next }); }}><option value="">Select color</option>{colors.map((v) => <option key={v.id} value={v.id}>{v.colorName} - {fullSku(stock.Product, v)}</option>)}</select></label>
-      </div>}
-      {variants.length > 0 && <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">All variants with SKU</p>
-        <div className="space-y-2">{variants.map((variant) => <div key={variant.id || variant.skuSuffix} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white px-3 py-2 text-xs"><span className="font-semibold text-slate-800">{variant.variantName} / {variant.colorName || "-"}</span><span className="font-mono text-indigo-700">{fullSku(stock.Product, variant)}</span><span className="font-semibold text-slate-600">{variant.stockQuantity ?? 0} qty</span></div>)}</div>
-      </div>}
-      <p className="mt-3 text-sm font-semibold text-slate-700">Available stock: {availableQuantity}</p>
-      {stock.Product?.description && <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-600">{stock.Product.description}</p>}
-      {stock.description && <p className="mt-2 rounded-md bg-slate-50 p-2 text-xs text-slate-500">{stock.description}</p>}
-      <label className="mt-3 block"><span className="text-sm font-medium text-slate-600">Order quantity</span><input className={`mt-1 w-full rounded-md border px-3 py-2 outline-none ${invalid ? "border-red-400 bg-red-50 animate-pulse" : "border-slate-300 focus:border-brand focus:ring-2 focus:ring-cyan-100"}`} type="number" min="1" max={availableQuantity} value={quantity} onChange={(e) => setQuantity(e.target.value)} /></label>
-      {invalid && <div className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-700">You cannot order more than available stock. Available quantity: {availableQuantity}</div>}
-      {invalid && <div className="mt-3"><Button variant="ghost" onClick={requestMore}>Request More Stock</Button></div>}
+
+      {/* Order quantity & actions */}
+      <div className="mt-4 pt-3 border-t border-slate-100">
+        <label className="block">
+          <div className="flex justify-between items-center text-xs">
+            <span className="font-bold text-slate-700">Order Quantity</span>
+            <span className="text-slate-500">Max: {availableQuantity}</span>
+          </div>
+          <input className={`mt-1 w-full rounded-md border px-3 py-1.5 text-sm outline-none transition ${invalid ? "border-red-400 bg-red-50 animate-pulse" : "border-slate-300 focus:border-brand focus:ring-2 focus:ring-cyan-100"}`} type="number" min="1" max={availableQuantity} placeholder="Enter quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        </label>
+        {invalid && <div className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-700">Cannot order more than {availableQuantity} available units.</div>}
+        {invalid && <div className="mt-2"><Button variant="ghost" className="w-full text-xs" onClick={requestMore}>Request More Stock</Button></div>}
+      </div>
     </div>
   );
 }
@@ -759,17 +876,48 @@ function DealerInventory({ rows = [], updateLowStockLimit, readOnly = false }) {
               <ImageWithFallback src={product.image} alt={product.productName} />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div><p className="font-bold text-slate-950">{productNameWithSku(product)}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product)}</p><p className="text-sm text-slate-500">Product quantity: <strong className="text-slate-800">{group.total} units</strong> | Low stock limit: {Number.isFinite(groupLimit) ? groupLimit : 0}</p></div>
-                  <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${status === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : status === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Product</p>
+                    <p className="font-bold text-slate-950 text-base">{product.productName || "Product"}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-semibold text-slate-500">SKU Code:</span>
+                      <CompactSku value={product.sku} />
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-600 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-100 border border-slate-200 px-2.5 py-0.5 font-bold text-slate-800">Total Stock: {group.total} units</span>
+                      <span>Low stock limit: <strong className="text-slate-800">{Number.isFinite(groupLimit) ? groupLimit : 0}</strong></span>
+                    </p>
+                  </div>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${status === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : status === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{status}</span>
                 </div>
-                <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Variants in your inventory</p>
                   <div className="space-y-3">{group.rows.map((item) => {
                     const qty = Number(item.quantity || 0);
                     const limit = Number(limits[item.id] ?? item.lowStockLimit ?? 0);
                     const variant = rowVariant(item);
                     const variantStatus = qty === 0 ? "Out of Stock" : qty <= limit ? "Low Stock" : "Available";
-                    return <div key={item.id} className="rounded-md bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold text-slate-900">{item.variantName || variant?.variantName || "Standard"} / {item.colorName || variant?.colorName || "-"}</p><p className="font-mono text-xs text-indigo-700">{productSkuText(product, variant)}</p></div><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-semibold text-slate-500">Variant quantity:</span><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-700">{qty} units</span><span className={`rounded-full border px-2 py-1 text-xs font-semibold ${variantStatus === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : variantStatus === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{variantStatus}</span></div></div><div className="mt-3 flex flex-wrap items-end gap-2"><TextField label="Low stock limit" type="number" min="0" value={limit} onChange={(e) => setLimits({ ...limits, [item.id]: e.target.value })} disabled={readOnly} />{readOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={() => updateLowStockLimit(item.id, limit)}>Save Limit</Button>}</div></div>;
+                    return (
+                      <div key={item.id} className="rounded-md border border-slate-200 bg-white p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-slate-900 text-sm">{item.variantName || variant?.variantName || "Standard"} / {item.colorName || variant?.colorName || "-"}</p>
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <span className="text-[11px] font-semibold text-slate-500">Variant SKU:</span>
+                              <CompactSku value={fullSku(product, variant)} />
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-xs font-bold text-indigo-700">Stock: {qty} units</span>
+                            <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${variantStatus === "Out of Stock" ? "border-red-200 bg-red-50 text-red-700" : variantStatus === "Low Stock" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : "border-green-200 bg-green-50 text-green-700"}`}>{variantStatus}</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-end gap-2">
+                          <TextField label="Low stock limit" type="number" min="0" value={limit} onChange={(e) => setLimits({ ...limits, [item.id]: e.target.value })} disabled={readOnly} />
+                          {readOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={() => updateLowStockLimit(item.id, limit)}>Save Limit</Button>}
+                        </div>
+                      </div>
+                    );
                   })}</div>
                 </div>
               </div>
@@ -806,17 +954,17 @@ function DealerSales({ inventory = [], sales = [], form, setForm, onSubmit, filt
         {error && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
         <FormGrid onSubmit={onSubmit}>
           <TextField label="Sale date" type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })} required />
-          <label className="block"><span className="text-sm font-semibold text-slate-600">Product</span><select className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm" value={form.inventoryId || ""} onChange={(e) => { const item = inventory.find((row) => String(row.id) === e.target.value); setForm({ ...form, inventoryId: e.target.value, productId: item?.productId || "" }); }} required><option value="">Select product</option>{inventory.map((item) => <option key={item.id} value={item.id}>{itemLabelWithSku(item)} ({item.quantity} available)</option>)}</select></label>
+          <label className="block"><span className="text-sm font-semibold text-slate-600">Product</span><select className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm" value={form.inventoryId || ""} onChange={(e) => { const item = inventory.find((row) => String(row.id) === e.target.value); setForm({ ...form, inventoryId: e.target.value, productId: item?.productId || "" }); }} required><option value="">Select product</option>{inventory.map((item) => <option key={item.id} value={item.id}>{item.Product?.productName || "Product"}{item.variantName ? ` (${item.variantName}/${item.colorName || "-"})` : ""} - SKU: {fullSku(item.Product, item)} ({item.quantity} available)</option>)}</select></label>
           <TextField label="Quantity sold" type="number" min="1" max={selected?.quantity || 0} value={form.quantitySold} onChange={(e) => setForm({ ...form, quantitySold: e.target.value })} required />
           <TextField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
-          {selected && <div className="md:col-span-2 rounded-md bg-slate-50 p-3 text-sm font-semibold text-slate-700">Current available quantity: {selected.quantity}<span className="ml-2 font-mono text-xs text-indigo-700">{productSkuText(selected.Product, rowVariant(selected))}</span></div>}
+          {selected && <div className="md:col-span-2 rounded-md bg-slate-50 p-3 text-sm font-semibold text-slate-700 flex flex-wrap items-center justify-between gap-2"><span>Current available quantity: {selected.quantity}</span><div className="flex items-center gap-1.5"><span className="text-xs text-slate-500 font-normal">SKU:</span><CompactSku value={fullSku(selected.Product, rowVariant(selected))} /></div></div>}
           {selected && Number(form.quantitySold || 0) > Number(selected.quantity || 0) && <div className="md:col-span-2 rounded-md bg-red-50 p-3 text-sm font-semibold text-red-700">You cannot sell more than available inventory stock.</div>}
           <div className="md:col-span-2">{readOnly ? <span className="inline-flex rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button type="submit">Record Sale</Button>}</div>
         </FormGrid>
       </Section>
-      <Section title="Sales history" actions={<div className="flex flex-wrap gap-2"><input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="date" value={filter.date} onChange={(e) => setFilter({ ...filter, date: e.target.value })} /><select className="rounded-md border border-slate-200 px-3 py-2 text-sm" value={filter.productId} onChange={(e) => setFilter({ ...filter, productId: e.target.value })}><option value="">All products</option>{inventory.map((item) => <option key={item.id} value={item.productId}>{itemLabelWithSku(item)}</option>)}</select></div>}>
+      <Section title="Sales history" actions={<div className="flex flex-wrap gap-2"><input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="date" value={filter.date} onChange={(e) => setFilter({ ...filter, date: e.target.value })} /><select className="rounded-md border border-slate-200 px-3 py-2 text-sm" value={filter.productId} onChange={(e) => setFilter({ ...filter, productId: e.target.value })}><option value="">All products</option>{inventory.map((item) => <option key={item.id} value={item.productId}>{item.Product?.productName || "Product"}{item.variantName ? ` (${item.variantName}/${item.colorName || "-"})` : ""}</option>)}</select></div>}>
         {topProducts.length > 0 && <div className="mb-4 flex flex-wrap gap-2">{topProducts.map((p) => <span key={p.name} className="rounded-full bg-cyan-50 px-3 py-1 text-sm font-semibold text-brand">{p.name}: {p.qty}</span>)}</div>}
-        {filtered.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Product + SKU", "Variant", "Color", "Sold", "Before", "After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{filtered.map((sale) => <tr key={sale.id} className="border-t border-slate-100"><td className="p-3">{sale.saleDate}</td><td className="p-3"><div className="flex items-center gap-2">{sale.Product?.image && <img src={fileUrl(sale.Product.image)} alt="" className="h-9 w-9 rounded-md object-cover" />}<span>{productNameWithSku(sale.Product, rowVariant(sale))}<span className="block font-mono text-xs text-indigo-700">{productSkuText(sale.Product, rowVariant(sale))}</span></span></div></td><td>{sale.variantName || "-"}</td><td>{sale.colorName || "-"}</td><td>{sale.quantitySold}</td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No sales recorded yet" />}
+        {filtered.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Product", "SKU", "Variant", "Color", "Sold", "Before", "After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{filtered.map((sale) => <tr key={sale.id} className="border-t border-slate-100"><td className="p-3">{sale.saleDate}</td><td className="p-3"><div className="flex items-center gap-2">{sale.Product?.image && <ImageWithFallback src={sale.Product.image} alt="" className="h-9 w-9 rounded-md object-cover" fallbackClassName="h-9 w-9 rounded-md" />}<span className="font-semibold text-slate-900">{sale.Product?.productName || "Product"}</span></div></td><td className="p-3"><CompactSku value={fullSku(sale.Product, rowVariant(sale))} /></td><td>{sale.variantName || "-"}</td><td>{sale.colorName || "-"}</td><td><span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">{sale.quantitySold} units</span></td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No sales recorded yet" />}
       </Section>
     </div>
   );
@@ -900,12 +1048,146 @@ function Orders({ rows, filter, setFilter, search, setSearch, onCancel }) {
 }
 
 function OrderCard({ order, onCancel }) {
-  const summary = order.items?.map((i) => `${itemLabelWithSku(i)} x ${i.quantity}`).join(", ");
-  return <div className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:shadow-lg"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{summary || "Order"}</p><p className="text-sm text-slate-500">Order Date: {new Date(order.createdAt).toLocaleString()}</p><p className="mt-1 text-xs text-slate-400">Reference: {order.orderNumber}</p></div><div className="flex flex-wrap gap-2"><StatusBadge value={order.status} /><span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold">{formatMoney(order.totalAmount)}</span></div></div><DeliveryTimeline order={order} /><div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>Expected delivery: {order.deliveredDate || "-"}</span>{order.status === "pending" && <Button variant="danger" onClick={() => onCancel(order)}>Cancel order</Button>}</div></div>;
+  const items = order.items || [];
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft transition hover:shadow-md">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Order Ref</span>
+            <span className="font-mono text-base font-bold text-slate-900">#{order.orderNumber}</span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500">Order Placed: {new Date(order.createdAt).toLocaleString()}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge value={order.status} />
+          <span className="rounded-full bg-slate-100 border border-slate-200 px-3 py-1 text-xs font-bold text-slate-800">
+            Total: {formatMoney(order.totalAmount)}
+          </span>
+        </div>
+      </div>
+
+      {/* Labeled Ordered Products */}
+      <div className="mt-3.5">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Ordered Products ({items.length})</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {items.map((item, index) => {
+            const product = item.Product || item.product || {};
+            const variant = rowVariant(item);
+            const sku = fullSku(product, variant);
+            const variantName = item.variantName || variant?.variantName;
+            const colorName = item.colorName || variant?.colorName;
+            return (
+              <div key={item.id || index} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5 text-xs">
+                <ImageWithFallback src={product.image} alt="" className="h-11 w-11 shrink-0 rounded-md object-cover border border-slate-200" fallbackClassName="h-11 w-11 shrink-0 rounded-md" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <p className="font-bold text-slate-900 truncate" title={product.productName}>{product.productName || "Product"}</p>
+                    <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-bold text-emerald-800">
+                      Qty: {item.quantity}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px] text-indigo-700 bg-white border border-slate-200 px-1.5 py-0.5 rounded font-semibold">
+                      SKU: <CompactSku value={sku} />
+                    </span>
+                    {(variantName || colorName) && (
+                      <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 text-[11px] font-medium">
+                        Variant: {variantName || "Standard"}{colorName ? ` / ${colorName}` : ""}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-slate-100">
+        <DeliveryTimeline order={order} />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+          <span className="font-medium">Expected delivery: <strong className="text-slate-800">{order.deliveredDate || "-"}</strong></span>
+          {order.status === "pending" && <Button variant="danger" className="text-xs px-3 py-1.5" onClick={() => onCancel(order)}>Cancel order</Button>}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DeliveryBoard({ rows }) {
-  return <Section title="Delivery tracking">{rows.length ? <div className="grid gap-4 xl:grid-cols-2">{rows.map((order) => { const summary = order.items?.map((i) => `${itemLabelWithSku(i)} x ${i.quantity}`).join(", "); return <div key={order.id} className="rounded-md border border-slate-200 bg-white p-4 shadow-soft transition hover:shadow-lg"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{summary || "Delivery"}</p><p className="text-sm text-slate-500">Reference: {order.orderNumber}</p></div><StatusBadge value={order.status} /></div><DeliveryTimeline order={order} /><p className="mt-3 text-sm text-slate-500">Days left until delivered: {order.daysLeftUntilDelivered ?? "-"}</p></div>; })}</div> : <Empty />}</Section>;
+  return (
+    <Section title="Delivery tracking">
+      {rows.length ? (
+        <div className="grid gap-4 xl:grid-cols-2">
+          {rows.map((order) => {
+            const items = order.items || [];
+            return (
+              <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft transition hover:shadow-md">
+                <div className="flex flex-wrap justify-between items-start gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Delivery Ref</span>
+                      <span className="font-mono text-base font-bold text-slate-900">#{order.orderNumber}</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-slate-500">Ordered: {new Date(order.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <StatusBadge value={order.status} />
+                </div>
+
+                {/* Fully Labeled Ordered Products in Delivery */}
+                <div className="mt-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Package Items ({items.length})</p>
+                  <div className="space-y-2">
+                    {items.map((item, index) => {
+                      const product = item.Product || item.product || {};
+                      const variant = rowVariant(item);
+                      const sku = fullSku(product, variant);
+                      const variantName = item.variantName || variant?.variantName;
+                      const colorName = item.colorName || variant?.colorName;
+                      return (
+                        <div key={item.id || index} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/70 p-2.5 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ImageWithFallback src={product.image} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover border border-slate-200" fallbackClassName="h-9 w-9 shrink-0 rounded-md" />
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 truncate" title={product.productName}>{product.productName || "Product"}</p>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 font-mono text-[11px] text-indigo-700 bg-white border border-slate-200 px-1.5 py-0.5 rounded font-semibold">
+                                  SKU: <CompactSku value={sku} />
+                                </span>
+                                {(variantName || colorName) && (
+                                  <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 text-[11px] font-medium">
+                                    Variant: {variantName || "Standard"}{colorName ? ` / ${colorName}` : ""}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                            Qty: {item.quantity} units
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <DeliveryTimeline order={order} />
+                  <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
+                    <span>Days left until delivered: <strong className="text-slate-800 font-bold">{order.daysLeftUntilDelivered ?? "-"}</strong></span>
+                    {order.deliveredDate && <span>Expected: <strong className="text-slate-800">{order.deliveredDate}</strong></span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Empty text="No active deliveries found" />
+      )}
+    </Section>
+  );
 }
 
 function DeliveryLine({ order }) {
@@ -922,7 +1204,112 @@ function StatusBadge({ value }) {
 function DealerFinance({ rows = [], pay, readOnly = false }) {
   const [tab, setTab] = useState("unpaid");
   const visible = rows.filter((p) => tab === "all" || (tab === "unpaid" ? p.paymentStatus === "pending" : p.paymentStatus === "paid"));
-  return <Section title="Payment requests and history" actions={<div className="flex gap-2">{["unpaid", "paid", "all"].map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-full px-3 py-1 text-sm font-semibold ${tab === item ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{item}</button>)}</div>}>{visible.length ? <div className="space-y-4">{visible.map((p) => <div key={p.id} className="rounded-md border border-slate-200 p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{p.invoiceNumber || `Invoice #${p.id}`} - {formatMoney(p.amount)}</p><p className="text-sm text-slate-500">Order {p.orderNumber || p.Order?.orderNumber || p.orderId} - approved {p.orderApprovedAt ? new Date(p.orderApprovedAt).toLocaleDateString() : "-"}</p><p className="mt-1 text-sm text-slate-500"><FinanceBadge value={p.paymentStatus} /> {p.paymentStatus === "pending" && <span className="ml-2 font-semibold text-amber-700">{p.daysUnpaid || 0} days unpaid</span>}</p><p className="mt-1 text-xs text-slate-500">{p.Order?.items?.map((i) => `${itemLabelWithSku(i)} x ${i.quantity}`).join(", ") || p.productSummary}</p></div><div className="flex flex-wrap items-center gap-2">{p.invoiceFile && <a className="rounded-md border border-slate-200 px-3 py-2 text-sm text-indigo-700" href={fileUrl(p.invoiceFile)} target="_blank">View Invoice</a>}{p.paymentStatus === "pending" ? <><Button onClick={() => pay(p.id, "online")}>Pay Online</Button><Button variant="ghost" onClick={() => pay(p.id, "cash")}>Cash Paid</Button></> : <span className="rounded-md bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">Paid <FinanceBadge value={p.paymentMethod} /></span>}</div></div>{p.transactionId && <p className="mt-2 text-xs text-slate-500">Transaction: {p.transactionId}</p>}{p.paidAt && <p className="mt-1 text-xs text-slate-500">Paid at: {new Date(p.paidAt).toLocaleString()}</p>}{p.creditAwarded && <p className="mt-1 text-xs font-semibold text-emerald-700">Credit coins awarded</p>}</div>)}</div> : <Empty text="No payment requests yet" />}</Section>;
+  return (
+    <Section title="Payment requests and history" actions={<div className="flex gap-2">{["unpaid", "paid", "all"].map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-full px-3 py-1 text-sm font-semibold ${tab === item ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{item}</button>)}</div>}>
+      {visible.length ? (
+        <div className="space-y-4">
+          {visible.map((p) => {
+            const items = p.Order?.items || [];
+            return (
+              <div key={p.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft transition hover:shadow-md">
+                <div className="flex flex-wrap justify-between items-start gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Invoice:</span>
+                      <span className="font-mono text-base font-bold text-slate-900">{p.invoiceNumber || `Invoice #${p.id}`}</span>
+                      <span className="text-sm font-extrabold text-indigo-700">· {formatMoney(p.amount)}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>Order Ref: <strong className="text-slate-800">#{p.orderNumber || p.Order?.orderNumber || p.orderId}</strong></span>
+                      <span>·</span>
+                      <span>Approved: <strong className="text-slate-800">{p.orderApprovedAt ? new Date(p.orderApprovedAt).toLocaleDateString() : "-"}</strong></span>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <FinanceBadge value={p.paymentStatus} />
+                      {p.paymentStatus === "pending" && <span className="font-semibold text-xs text-amber-700">{p.daysUnpaid || 0} days unpaid</span>}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {p.invoiceFile && <a className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 transition" href={fileUrl(p.invoiceFile)} target="_blank" rel="noreferrer">View Invoice</a>}
+                    {p.paymentStatus === "pending" ? (
+                      readOnly ? (
+                        <span className="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">Managed by Finance Manager</span>
+                      ) : (
+                        <>
+                          <Button className="text-xs px-3 py-1.5" onClick={() => pay(p.id, "online")}>Pay Online</Button>
+                          <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={() => pay(p.id, "cash")}>Cash Paid</Button>
+                        </>
+                      )
+                    ) : (
+                      <span className="rounded-md bg-green-50 border border-green-200 px-3 py-1 text-xs font-bold text-green-700 inline-flex items-center gap-1.5">
+                        Paid <FinanceBadge value={p.paymentMethod} />
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Properly Labeled Products Section */}
+                <div className="mt-3.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2">Invoice Products</p>
+                  {items.length > 0 ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {items.map((item, idx) => {
+                        const product = item.Product || item.product || {};
+                        const variant = rowVariant(item);
+                        const sku = fullSku(product, variant);
+                        const variantName = item.variantName || variant?.variantName;
+                        const colorName = item.colorName || variant?.colorName;
+                        return (
+                          <div key={item.id || idx} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5 text-xs">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <ImageWithFallback src={product.image} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover border border-slate-200" fallbackClassName="h-9 w-9 shrink-0 rounded-md" />
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 truncate" title={product.productName}>{product.productName || "Product"}</p>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-indigo-700 bg-white border border-slate-200 px-1.5 py-0.5 rounded font-semibold">
+                                    SKU: <CompactSku value={sku} />
+                                  </span>
+                                  {(variantName || colorName) && (
+                                    <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 text-[11px] font-medium">
+                                      Variant: {variantName || "Standard"}{colorName ? ` / ${colorName}` : ""}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                              Qty: {item.quantity} units
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : p.productSummary ? (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-700">
+                      <span className="font-bold text-slate-900">Summary: </span>{p.productSummary}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 italic">No product details attached</p>
+                  )}
+                </div>
+
+                {/* Footer details */}
+                {(p.transactionId || p.paidAt || p.creditAwarded) && (
+                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                    {p.transactionId && <span>Transaction ID: <strong className="font-mono text-slate-700">{p.transactionId}</strong></span>}
+                    {p.paidAt && <span>Paid at: <strong className="text-slate-700">{new Date(p.paidAt).toLocaleString()}</strong></span>}
+                    {p.creditAwarded && <span className="font-semibold text-emerald-700 inline-flex items-center gap-1"><Star size={12} className="fill-emerald-600" /> Credit coins awarded</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Empty text="No payment requests yet" />
+      )}
+    </Section>
+  );
 }
 
 function FinanceBadge({ value }) {

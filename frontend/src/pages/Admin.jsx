@@ -1,7 +1,7 @@
-﻿  import { useEffect, useState } from "react";
+  import { useEffect, useState } from "react";
 import { formatTitleCase } from "../utils/textFormatter";
-  import { AlertTriangle, CheckCircle2, Clock, Copy, Eye, EyeOff, Gift, IndianRupee, PackageCheck, Pencil, RefreshCw, Star, Trash2, Truck, Users, X, Paperclip, Clock3, Banknote, CreditCard, AlertCircle } from "lucide-react";
-  import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+  import { AlertTriangle, CheckCircle2, Clock, Copy, Check, Eye, EyeOff, Gift, IndianRupee, PackageCheck, Pencil, RefreshCw, Star, Trash2, Truck, Users, X, Paperclip, Clock3, Banknote, CreditCard, AlertCircle } from "lucide-react";
+  import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
   import Layout from "../components/Layout";
   import { api, fileUrl } from "../api/client";
   import { Button, Card, DeliveryTimeline, Empty, FileUploadPreview, FormGrid, formatDate, formatMoney, Loading, PageHeader, PaymentBadge, Plus, Section, Select, SearchableSelect, StatusBadge, TextField } from "../components/UI";
@@ -73,7 +73,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     { id: "creditManagement", label: "Credit Management", icon: "credits" },
     { id: "dealerSales", label: "Dealer Sales", icon: "reports" },
     { id: "messages", label: "Messages", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "policies", label: "Policies", icon: "policies" },
     { id: "reports", label: "Reports", icon: "reports" }
   ];
@@ -114,6 +114,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     const [deliveryFilter, setDeliveryFilter] = useState("all");
     const [deliveryPage, setDeliveryPage] = useState(1);
     const [chatTarget, setChatTarget] = useState(null);
+    const [approvingOrderId, setApprovingOrderId] = useState(null);
 
     const load = async (force = false) => {
       setLoading(true);
@@ -186,8 +187,15 @@ import { formatTitleCase } from "../utils/textFormatter";
         alert("Select all delivery timeline dates before approval.");
         return;
       }
-      await api.post(`/admin/orders/${orderId}/approve-with-schedule`, schedule);
-      load(true);
+      try {
+        setApprovingOrderId(orderId);
+        await api.post(`/admin/orders/${orderId}/approve-with-schedule`, schedule);
+        await load(true);
+      } catch (err) {
+        alert(err.response?.data?.message || "Failed to approve order.");
+      } finally {
+        setApprovingOrderId(null);
+      }
     };
 
     const createProduct = async (e) => {
@@ -357,11 +365,25 @@ import { formatTitleCase } from "../utils/textFormatter";
             </Section>
             <ProductTable rows={(data.products || []).map((p) => ({ ...p, quantity: p.CompanyInventory?.quantity || 0, lowStockLimit: p.CompanyInventory?.lowStockLimit || 0 }))} onEdit={quickEditProduct} onDelete={deleteProduct} />
             {editingProduct && <ProductEditModal product={editingProduct} onClose={() => setEditingProduct(null)} onSave={saveProductEdit} />}
-            <SimpleTable title="Dealer-wise stock" rows={(data.stock_dealers || []).map((s) => ({ dealer: s.Dealer?.dealerName || "Dealer", location: [s.Dealer?.area, s.Dealer?.city].filter(Boolean).join(", "), product: productNameWithSku(s.Product, s.ProductVariant || s), variant: s.variantName || "-", color: s.colorName || "-", quantity: s.quantity, lowStockLimit: s.lowStockLimit }))} cols={["dealer", "location", "product", "variant", "color", "quantity", "lowStockLimit"]} />
+            <SimpleTable
+              title="Dealer-wise stock"
+              rows={(data.stock_dealers || []).map((s) => ({
+                dealer: s.Dealer?.dealerName || "Dealer",
+                location: [s.Dealer?.area, s.Dealer?.city].filter(Boolean).join(", "),
+                product: s.Product?.productName || "Product",
+                sku: fullVariantSku(s.Product || { sku: "-" }, s.ProductVariant || s),
+                variant: s.variantName || "-",
+                color: s.colorName || "-",
+                quantity: s.quantity,
+                lowStockLimit: s.lowStockLimit
+              }))}
+              cols={["dealer", "location", "product", "sku", "variant", "color", "quantity", "lowStockLimit"]}
+              renderCell={(row, column) => column === "sku" ? <CompactSku value={row.sku} /> : undefined}
+            />
           </>
         )}
         {activeTab === "inventory" && <InventoryBoard products={(data.products || []).map((p) => ({ ...p, quantity: p.CompanyInventory?.quantity || 0, lowStockLimit: p.CompanyInventory?.lowStockLimit || 0 }))} dealerStock={data.stock_dealers || []} />}
-        {activeTab === "orders" && <OrderTable rows={data.orders || []} updateOrder={updateOrder} approveOrder={approveOrder} schedules={schedules} setSchedules={setSchedules} filter={orderFilter} setFilter={setOrderFilter} page={orderPage} setPage={setOrderPage} />}
+        {activeTab === "orders" && <OrderTable rows={data.orders || []} updateOrder={updateOrder} approveOrder={approveOrder} approvingOrderId={approvingOrderId} schedules={schedules} setSchedules={setSchedules} filter={orderFilter} setFilter={setOrderFilter} page={orderPage} setPage={setOrderPage} />}
         {activeTab === "delivery" && <DeliveryManagement rows={(data.orders || []).filter((o) => ["approved", "packing", "shipping", "out_for_delivery", "delivered"].includes(o.status))} updateOrder={updateOrder} filter={deliveryFilter} setFilter={setDeliveryFilter} page={deliveryPage} setPage={setDeliveryPage} />}
         {activeTab === "finance" && (
           <>
@@ -383,6 +405,7 @@ import { formatTitleCase } from "../utils/textFormatter";
   }
 
   function ProductDeliveryManagerDashboard({ analytics, products = [], orders = [], dealerStock = [], fallbackCards = [] }) {
+    const [selectedProduct, setSelectedProduct] = useState(null);
     const summary = analytics?.summary || {};
     const normalizedProducts = products.map((p) => ({ ...p, quantity: Number(p.CompanyInventory?.quantity ?? p.quantity ?? 0), lowStockLimit: Number(p.CompanyInventory?.lowStockLimit ?? p.lowStockLimit ?? 0) }));
     const statusCounts = orders.reduce((acc, order) => ({ ...acc, [order.status || "pending"]: (acc[order.status || "pending"] || 0) + 1 }), {});
@@ -392,7 +415,7 @@ import { formatTitleCase } from "../utils/textFormatter";
       { name: "Low stock", value: normalizedProducts.filter((p) => p.quantity > 0 && p.quantity <= p.lowStockLimit).length },
       { name: "Out of stock", value: normalizedProducts.filter((p) => p.quantity <= 0).length }
     ];
-    const stockArea = normalizedProducts.slice().sort((a, b) => b.quantity - a.quantity).slice(0, 10).map((p) => ({ product: productNameWithSku(p), stock: p.quantity, lowLimit: p.lowStockLimit, sku: p.sku }));
+    const stockArea = normalizedProducts.slice().sort((a, b) => b.quantity - a.quantity).slice(0, 10).map((p) => ({ ...p, product: p.productName, stock: p.quantity, lowLimit: p.lowStockLimit, sku: p.sku }));
     const dealerStockArea = Object.values(dealerStock.reduce((acc, row) => {
       const dealerName = row.Dealer?.dealerName || "Dealer";
       acc[dealerName] = acc[dealerName] || { dealerName, quantity: 0 };
@@ -410,14 +433,14 @@ import { formatTitleCase } from "../utils/textFormatter";
       ["Dealer Stock Rows", dealerStock.length],
       ["Delivery In Progress", ["packing", "shipping", "out_for_delivery"].reduce((sum, status) => sum + (statusCounts[status] || 0), 0)]
     ];
-    const colors = ["#16A34A", "#F59E0B", "#DC2626", "#4F46E5", "#0EA5E9", "#8B5CF6"];
+    const colors = ["#16A34A", "#F59E0B", "#64748B", "#4F46E5", "#0E7490", "#64748B"];
     const displayCards = cards.length ? cards : fallbackCards;
     return (
       <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{displayCards.map(([label, value]) => <Card key={label} label={label} value={value ?? 0} />)}</div>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{displayCards.map(([label, value]) => <ManagerKpiCard key={label} label={label} value={value ?? 0} />)}</div>
         <div className="grid gap-6 xl:grid-cols-2">
           <Section title="Product stock health">
-            <div className="h-80"><ResponsiveContainer><PieChart><Pie data={stockHealth} dataKey="value" nameKey="name" outerRadius={95} label>{stockHealth.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer></div>
+            <div className="h-80"><ResponsiveContainer><PieChart><Pie data={stockHealth} dataKey="value" nameKey="name" innerRadius={62} outerRadius={98} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{stockHealth.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={34} /></PieChart></ResponsiveContainer></div>
           </Section>
           <Section title="Order status radar">
             <div className="h-80"><ResponsiveContainer><RadarChart data={radarData}><PolarGrid /><PolarAngleAxis dataKey="status" /><PolarRadiusAxis allowDecimals={false} /><Radar name="Orders" dataKey="orders" stroke="#4F46E5" fill="#4F46E5" fillOpacity={0.35} /><Tooltip /><Legend /></RadarChart></ResponsiveContainer></div>
@@ -425,16 +448,17 @@ import { formatTitleCase } from "../utils/textFormatter";
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
           <Section title="Company stock area graph">
-            <div className="h-80"><ResponsiveContainer><AreaChart data={stockArea}><defs><linearGradient id="productStockFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0EA5E9" stopOpacity={0.45} /><stop offset="95%" stopColor="#0EA5E9" stopOpacity={0.05} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="product" /><YAxis /><Tooltip formatter={(value, name, row) => [value, name === "stock" ? `Stock (${row.payload.sku || "-"})` : "Low limit"]} /><Legend /><Area type="monotone" dataKey="stock" stroke="#0EA5E9" fill="url(#productStockFill)" /><Area type="monotone" dataKey="lowLimit" stroke="#F59E0B" fill="#F59E0B22" /></AreaChart></ResponsiveContainer></div>
+            <div className="h-80"><ResponsiveContainer><AreaChart data={stockArea}><defs><linearGradient id="productStockFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0E7490" stopOpacity={0.28} /><stop offset="100%" stopColor="#0E7490" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid stroke="#E8ECF4" strokeDasharray="4 4" vertical={false} /><XAxis dataKey="product" tick={{ fill: "#64748B", fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fill: "#64748B", fontSize: 11 }} /><Tooltip formatter={(value, name, row) => [value, name === "stock" ? `Stock (${row.payload.sku || "-"})` : "Low limit"]} /><Legend /><Area type="monotone" dataKey="stock" stroke="#0E7490" strokeWidth={2.5} fill="url(#productStockFill)" animationDuration={1000} /><Area type="monotone" dataKey="lowLimit" stroke="#F59E0B" strokeDasharray="5 4" fill="none" animationDuration={1000} /></AreaChart></ResponsiveContainer></div>
           </Section>
           <Section title="Dealer inventory distribution">
-            <div className="h-80"><ResponsiveContainer><AreaChart data={dealerStockArea}><defs><linearGradient id="dealerStockFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#10B981" stopOpacity={0.45} /><stop offset="95%" stopColor="#10B981" stopOpacity={0.05} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="dealerName" /><YAxis /><Tooltip /><Legend /><Area type="monotone" dataKey="quantity" stroke="#10B981" fill="url(#dealerStockFill)" /></AreaChart></ResponsiveContainer></div>
+            <div className="h-80"><ResponsiveContainer><AreaChart data={dealerStockArea}><defs><linearGradient id="dealerStockFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4F46E5" stopOpacity={0.24} /><stop offset="100%" stopColor="#4F46E5" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid stroke="#E8ECF4" strokeDasharray="4 4" vertical={false} /><XAxis dataKey="dealerName" tick={{ fill: "#64748B", fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fill: "#64748B", fontSize: 11 }} /><Tooltip /><Legend /><Area type="monotone" dataKey="quantity" stroke="#4F46E5" strokeWidth={2.5} fill="url(#dealerStockFill)" animationDuration={1000} /></AreaChart></ResponsiveContainer></div>
           </Section>
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
-          <MiniList title="Top stock products with SKU" rows={stockArea.map((p) => ({ productName: `${p.product} (${p.sku || "-"})`, quantity: p.stock }))} left="productName" right="quantity" />
+          <Section title="Top stock products">{stockArea.length ? <div className="space-y-2.5">{stockArea.slice(0, 5).map((product) => <div key={product.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-indigo-50 font-black text-indigo-700">{String(product.productName || "P").trim().charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate font-bold text-slate-900" title={product.productName}>{product.productName || "Product"}</p><p className="mt-0.5 text-xs text-slate-500">{Number(product.stock || 0).toLocaleString("en-IN")} units in company stock</p></div><Button variant="ghost" className="min-h-9 shrink-0 px-3 py-1.5 text-xs" onClick={() => setSelectedProduct(product)}>View details</Button></div>)}</div> : <Empty text="No stock products available" />}</Section>
           <MiniList title="Order status summary" rows={orderStatusData.map((row) => ({ status: row.status, count: row.count }))} left="status" right="count" />
         </div>
+        {selectedProduct && <ProductDetailsModal product={selectedProduct} onClose={() => setSelectedProduct(null)} />}
       </div>
     );
   }
@@ -458,7 +482,7 @@ import { formatTitleCase } from "../utils/textFormatter";
       return acc;
     }, {});
     const cashOnline = [
-      { name: "Cash", value: stats.cashPayments || payments.filter((p) => p.paymentMethod === "cash").length, fill: "#0EA5E9" },
+      { name: "Cash", value: stats.cashPayments || payments.filter((p) => p.paymentMethod === "cash").length, fill: "#0E7490" },
       { name: "Online", value: stats.onlinePayments || payments.filter((p) => p.paymentMethod === "online").length, fill: "#4F46E5" },
       { name: "Pending", value: stats.pendingPayments || payments.filter((p) => p.paymentStatus === "pending").length, fill: "#F59E0B" }
     ];
@@ -472,13 +496,13 @@ import { formatTitleCase } from "../utils/textFormatter";
     ];
     return (
       <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{(cards.length ? cards : fallbackCards).map(([label, value]) => <Card key={label} label={label} value={value ?? 0} />)}</div>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{(cards.length ? cards : fallbackCards).map(([label, value]) => <ManagerKpiCard key={label} label={label} value={value ?? 0} />)}</div>
         <div className="grid gap-6 xl:grid-cols-2">
           <Section title="Payment status bar graph">
-            <div className="h-80"><ResponsiveContainer><BarChart data={statusData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="status" /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="count" fill="#4F46E5" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div>
+            <div className="relative h-80"><ResponsiveContainer><PieChart><Pie data={statusData} dataKey="count" nameKey="status" innerRadius={72} outerRadius={108} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{statusData.map((row, index) => <Cell key={row.status} fill={row.status === "paid" ? "#16A34A" : row.status === "pending" ? "#F59E0B" : ["#64748B", "#4F46E5"][index % 2]} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={34} /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 bottom-8 flex flex-col items-center justify-center"><span className="text-3xl font-black text-slate-900">{statusData.reduce((sum, row) => sum + Number(row.count || 0), 0).toLocaleString("en-IN")}</span><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Payments</span></div></div>
           </Section>
           <Section title="Payment method radial graph">
-            <div className="h-80"><ResponsiveContainer><RadialBarChart innerRadius="25%" outerRadius="90%" data={cashOnline} startAngle={90} endAngle={-270}><RadialBar dataKey="value" background cornerRadius={10} /><Tooltip /><Legend iconSize={10} /></RadialBarChart></ResponsiveContainer></div>
+            <div className="h-80"><ResponsiveContainer><PieChart><Pie data={cashOnline} dataKey="value" nameKey="name" innerRadius={58} outerRadius={98} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{cashOnline.map((item) => <Cell key={item.name} fill={item.fill} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={34} /></PieChart></ResponsiveContainer></div>
           </Section>
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
@@ -486,7 +510,7 @@ import { formatTitleCase } from "../utils/textFormatter";
             <div className="h-80"><ResponsiveContainer><AreaChart data={Object.values(monthlyArea).sort((a, b) => a.date.localeCompare(b.date)).slice(-14)}><defs><linearGradient id="paidFinanceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#16A34A" stopOpacity={0.45} /><stop offset="95%" stopColor="#16A34A" stopOpacity={0.05} /></linearGradient><linearGradient id="pendingFinanceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F59E0B" stopOpacity={0.45} /><stop offset="95%" stopColor="#F59E0B" stopOpacity={0.05} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(value) => formatMoney(value)} /><Legend /><Area type="monotone" dataKey="paid" stroke="#16A34A" fill="url(#paidFinanceFill)" /><Area type="monotone" dataKey="pending" stroke="#F59E0B" fill="url(#pendingFinanceFill)" /></AreaChart></ResponsiveContainer></div>
           </Section>
           <Section title="Dealer-wise outstanding amount">
-            <div className="h-80"><ResponsiveContainer><BarChart data={dealerOutstanding}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="dealer" /><YAxis /><Tooltip formatter={(value) => formatMoney(value)} /><Legend /><Bar dataKey="amount" fill="#0EA5E9" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer></div>
+            <div className="h-80"><ResponsiveContainer><BarChart data={dealerOutstanding} layout="vertical" margin={{ left: 8, right: 22, top: 8, bottom: 8 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `₹${Number(value || 0).toLocaleString("en-IN")}`} /><YAxis type="category" dataKey="dealer" width={105} tick={{ fontSize: 11 }} /><Tooltip formatter={(value) => formatMoney(value)} /><Bar dataKey="amount" fill="#0E7490" radius={[0, 7, 7, 0]} maxBarSize={28} animationDuration={900} /></BarChart></ResponsiveContainer></div>
           </Section>
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
@@ -497,8 +521,24 @@ import { formatTitleCase } from "../utils/textFormatter";
     );
   }
 
+  function ManagerKpiCard({ label, value, icon: Icon }) {
+    const text = String(label || "").toLowerCase();
+    const tone = /pending|low stock|approved|delivered|payment/.test(text) ? "border-amber-500" : /revenue|sales|paid/.test(text) ? "border-green-600" : "border-indigo-600";
+    const Glyph = Icon || (/dealer/.test(text) ? Users : /payment|amount|revenue/.test(text) ? IndianRupee : /order/.test(text) ? Clock : /stock|product/.test(text) ? PackageCheck : CheckCircle2);
+    const iconTone = tone === "border-amber-500" ? "bg-amber-50 text-amber-700" : tone === "border-green-600" ? "bg-green-50 text-green-700" : "bg-indigo-50 text-indigo-700";
+    return <div className={`group min-w-0 rounded-[18px] border border-slate-200 border-t-[3px] ${tone} bg-white p-[18px] shadow-sm transition duration-300 hover:-translate-y-1 hover:shadow-lg`}><span className={`mb-4 grid h-10 w-10 place-items-center rounded-xl ${iconTone}`}><Glyph size={19} /></span><p className="truncate text-sm font-semibold text-slate-500" title={String(label)}>{label}</p><p className="mt-2 overflow-hidden text-ellipsis whitespace-nowrap text-2xl font-black tracking-tight text-slate-950" title={String(value ?? 0)}>{typeof value === "number" ? value.toLocaleString("en-IN") : value ?? 0}</p></div>;
+  }
+
+  function AdminProductStockList({ title, rows = [], low = false }) {
+    const max = Math.max(1, ...rows.map((row) => Number(row.quantity || 0)));
+    return <Section title={title}>{rows.length ? <div className="space-y-2.5">{rows.map((row, index) => { const stock = Number(row.quantity || 0); const limit = Number(row.lowStockLimit || max); const progress = Math.max(4, Math.min(100, (stock / (low ? Math.max(limit, 1) : max)) * 100)); return <div key={`${row.productName}-${row.sku || index}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/70 p-3 transition hover:border-indigo-100 hover:bg-white"><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-black ${low ? "bg-amber-50 text-amber-700" : "bg-indigo-50 text-indigo-700"}`}>{String(row.productName || "P").trim().charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold text-slate-900" title={row.productName}>{row.productName || "Product"}</p><p className="truncate font-mono text-[11px] text-slate-500" title={row.sku || "SKU not assigned"}>SKU · {row.sku || "Not assigned"}</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className={`h-full rounded-full transition-[width] duration-700 ${low ? "bg-amber-500" : "bg-indigo-600"}`} style={{ width: `${progress}%` }} /></div></div><div className="shrink-0 text-right"><p className="text-lg font-black text-slate-950">{stock.toLocaleString("en-IN")}</p><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">units</p></div></div>; })}</div> : <Empty text={low ? "All products are well stocked" : "No stock records available"} />}</Section>;
+  }
+
   function AdminAnalytics({ analytics, fallbackCards }) {
-    if (!analytics) return <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{fallbackCards.map(([label, value]) => <Card key={label} label={label} value={value} />)}</div>;
+    if (!analytics) return <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{fallbackCards.map(([label, value]) => <ManagerKpiCard key={label} label={label} value={value} />)}</div>;
+    const paymentStatus = analytics.financeStats?.paymentStatusRatio || [];
+    const paymentTotal = paymentStatus.reduce((sum, row) => sum + Number(row.count || 0), 0);
+    const paidPercent = paymentTotal ? Math.round((Number(paymentStatus.find((row) => row.status === "paid")?.count || 0) / paymentTotal) * 100) : 0;
     const summaryCards = [
       ["Total Dealers", analytics.summary.totalDealers, Users],
       ["Total Products", analytics.summary.totalProducts, PackageCheck],
@@ -516,20 +556,20 @@ import { formatTitleCase } from "../utils/textFormatter";
     const maxOrders = Math.max(...analytics.orderStatusCounts.map((row) => row.count), 1);
     return (
       <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">{summaryCards.map(([label, value, Icon]) => <Card key={label} label={label} value={value ?? 0} icon={Icon} />)}</div>
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{summaryCards.map(([label, value, Icon]) => <ManagerKpiCard key={label} label={label} value={value ?? 0} icon={Icon} />)}</div>
+        <div className="grid gap-4 xl:grid-cols-2">
           <Section title="Order analytics">{analytics.orderStatusCounts.map((row) => <div key={row.status} className="mb-3"><div className="mb-1 flex justify-between text-sm"><span className="capitalize">{row.status.replaceAll("_", " ")}</span><span>{row.count}</span></div><div className="h-2 rounded-full bg-slate-100"><div className="h-2 rounded-full bg-brand" style={{ width: `${(row.count / maxOrders) * 100}%` }} /></div></div>)}</Section>
-          <Section title="Payment status ratio"><div className="h-72"><ResponsiveContainer><PieChart><Pie data={analytics.financeStats.paymentStatusRatio} dataKey="count" nameKey="status" outerRadius={90} label>{analytics.financeStats.paymentStatusRatio.map((entry, index) => <Cell key={entry.status} fill={["#F59E0B", "#16A34A", "#DC2626"][index]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></Section>
+          <Section title="Payment status ratio"><div className="relative h-72"><ResponsiveContainer><PieChart><Pie data={paymentStatus} dataKey="count" nameKey="status" innerRadius={58} outerRadius={92} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{paymentStatus.map((entry) => <Cell key={entry.status} fill={entry.status === "paid" ? "#16A34A" : entry.status === "pending" ? "#F59E0B" : "#64748B"} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={28} /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 bottom-7 flex flex-col items-center justify-center"><span className="text-2xl font-black text-slate-900">{paidPercent}%</span><span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Paid</span></div></div></Section>
         </div>
-        <div className="grid gap-6 xl:grid-cols-2">
-          <MiniList title="Top 5 highest stock products" rows={(analytics.inventoryStats.topHighestStockProducts || []).map((row) => ({ ...row, productName: rowNameWithSku(row) }))} left="productName" right="quantity" />
-          <MiniList title="Top 5 low stock products" rows={(analytics.inventoryStats.topLowStockProducts || []).map((row) => ({ ...row, productName: rowNameWithSku(row) }))} left="productName" right="quantity" />
+        <div className="grid gap-4 xl:grid-cols-3">
+          <AdminProductStockList title="Top 5 highest stock products" rows={analytics.inventoryStats.topHighestStockProducts || []} />
+          <AdminProductStockList title="Top 5 low stock products" rows={analytics.inventoryStats.topLowStockProducts || []} low />
           <MiniList title="Dealer-wise outstanding payment" rows={analytics.financeStats.dealerWiseOutstandingPayment} left="dealerName" right="amount" prefix="Rs " />
           <MiniList title="Area-wise dealer count" rows={analytics.dealerStats.areaWiseDealerCount} left="area" right="count" />
           <MiniList title="Top selling products" rows={(analytics.salesStats?.topSellingProducts || []).map((row) => ({ ...row, productName: rowNameWithSku(row) }))} left="productName" right="quantitySold" />
           <MiniList title="Dealer sales performance" rows={analytics.salesStats?.dealerSalesPerformance || []} left="dealerName" right="quantitySold" />
         </div>
-        <Section title="Dealer stock summary"><div className="h-72"><ResponsiveContainer><BarChart data={analytics.inventoryStats.dealerWiseStockSummary}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="dealerName" /><YAxis /><Tooltip /><Bar dataKey="quantity" fill="#0E7490" /></BarChart></ResponsiveContainer></div></Section>
+        <Section title="Dealer stock summary"><div className="h-72"><ResponsiveContainer><BarChart data={analytics.inventoryStats.dealerWiseStockSummary} margin={{ top: 16, right: 16, left: 0, bottom: 36 }}><CartesianGrid strokeDasharray="4 4" stroke="#E2E8F0" vertical={false} /><XAxis dataKey="dealerName" angle={-18} textAnchor="end" height={48} tick={{ fill: "#64748B", fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fill: "#64748B", fontSize: 11 }} /><Tooltip /><Bar dataKey="quantity" name="Stock units" fill="#0E7490" radius={[7, 7, 0, 0]} maxBarSize={42} animationDuration={900} /></BarChart></ResponsiveContainer></div></Section>
         <div className="grid gap-6 xl:grid-cols-2">
           <Recent title="Recent orders" rows={analytics.recentOrders} primary={(row) => row.orderNumber} secondary={(row) => `${row.status} | ${formatMoney(row.totalAmount)}`} />
           <Recent title="Recent payments" rows={analytics.recentPayments} primary={(row) => row.Dealer?.dealerName || row.invoiceNumber || "Payment"} secondary={(row) => `${row.Order?.items?.map(orderItemLabel).join(", ") || row.productSummary || row.paymentStatus} | ${formatMoney(row.amount)}`} />
@@ -671,11 +711,89 @@ import { formatTitleCase } from "../utils/textFormatter";
   function CopySku({ value }) {
     const [copied, setCopied] = useState(false);
     const copy = async (event) => {
-      event.stopPropagation();
-      try { await navigator.clipboard.writeText(value || ""); setCopied(true); setTimeout(() => setCopied(false), 1200); }
-      catch { alert("Could not copy SKU"); }
+      event?.stopPropagation?.();
+      try {
+        await navigator.clipboard.writeText(value || "");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      } catch {
+        alert("Could not copy SKU");
+      }
     };
-    return <button type="button" aria-label={`Copy SKU ${value}`} title={copied ? "Copied" : "Copy SKU"} onClick={copy} className="ml-1 inline-grid h-6 w-6 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-700"><Copy size={12} /></button>;
+    return (
+      <button
+        type="button"
+        aria-label={`Copy SKU ${value}`}
+        title={copied ? "Copied" : "Copy SKU"}
+        onClick={copy}
+        className="ml-1 inline-grid h-6 w-6 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:border-indigo-300 hover:text-indigo-700 transition"
+      >
+        {copied ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+      </button>
+    );
+  }
+
+  function CompactSku({ value }) {
+    const sku = String(value || "-");
+    const preview = sku.length > 14 ? `${sku.slice(0, 7)}…${sku.slice(-4)}` : sku;
+    return (
+      <span className="inline-flex max-w-full items-center gap-1 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku}`}>
+        <span className="truncate">{preview}</span>
+        <CopySku value={value} />
+      </span>
+    );
+  }
+
+  function OrderVisualItems({ items = [] }) {
+    if (!items || !items.length) return <p className="text-xs text-slate-400 italic">No products listed</p>;
+    return (
+      <div className="mt-2.5 space-y-2">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Ordered Products ({items.length})</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {items.map((item, index) => {
+            const product = item.Product || item.product || {};
+            const variant = item.ProductVariant || item;
+            const sku = fullVariantSku(product, variant);
+            const variantText = item.variantName || variant.variantName;
+            const colorText = item.colorName || variant.colorName;
+            return (
+              <div key={item.id || index} className="flex items-center justify-between gap-2.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5 text-xs shadow-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {product.image ? (
+                    <img src={fileUrl(product.image)} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover border border-slate-200" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                  ) : (
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-slate-200 text-[10px] font-bold text-slate-500 uppercase">Item</div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-bold text-slate-900 truncate" title={product.productName}>{product.productName || "Product"}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-indigo-700 bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[11px] font-semibold inline-flex items-center gap-1">
+                        SKU: {sku} <CopySku value={sku} />
+                      </span>
+                      {(variantText || colorText) && (
+                        <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 font-medium text-[11px]">
+                          Variant: {variantText || "Standard"}{colorText ? ` / ${colorText}` : ""}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 font-bold text-emerald-800 text-xs">
+                    Quantity: {item.quantity} units
+                  </span>
+                  {item.price && (
+                    <span className="text-[11px] text-slate-500 font-semibold">
+                      {formatMoney(item.price)}/ea
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   function ProductTable({ rows, onEdit, onDelete }) {
@@ -747,9 +865,9 @@ import { formatTitleCase } from "../utils/textFormatter";
       ["Status", product.status]
     ];
     return (
-      <ProductModalShell title={productNameWithSku(product)} onClose={onClose}>
+      <ProductModalShell title={product.productName || "Product details"} onClose={onClose}>
         <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-          {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-72 w-full rounded-xl object-cover" /> : <div className="grid h-72 w-full place-items-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-400">No image</div>}
+          {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-72 w-full rounded-xl object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <div className="grid h-72 w-full place-items-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-400">No image</div>}
           <div>
             <div className="grid gap-3 sm:grid-cols-2">
               {detailRows.map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-stone-50 p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words font-semibold text-slate-900">{value ?? "-"}</p></div>)}
@@ -836,7 +954,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           </div>
           {filters.dealerId && <p className="mt-4 text-sm font-semibold text-slate-700">{(() => { const dealer = dealers.find((d) => String(d.id) === String(filters.dealerId)); return dealer ? `${dealer.dealerName} - ${[dealer.area, dealer.city, dealer.pincode].filter(Boolean).join(", ")}` : ""; })()}</p>}
         </Section>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{cards.map(([label, value]) => <Card key={label} label={label} value={value ?? 0} />)}</div>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{cards.map(([label, value]) => <ManagerKpiCard key={label} label={label} value={value ?? 0} />)}</div>
         <div className="grid gap-6 xl:grid-cols-2">
           <ChartBlock title="Monthly purchase amount" data={charts.monthlyPurchases || []} x="month" y="value" />
           <ChartBlock title="Monthly sales units" data={charts.monthlySales || []} x="month" y="value" />
@@ -857,11 +975,14 @@ import { formatTitleCase } from "../utils/textFormatter";
 
   function ChartBlock({ title, data = [], x, y, second }) {
     const money = title.toLowerCase().includes("amount");
+    const useArea = title.toLowerCase().includes("monthly") || title.toLowerCase().includes("credit earned");
+    const areaId = `dealer-performance-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    if (useArea) return <Section title={title}>{data.length ? <div className="h-80 min-w-0"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data} margin={{ top: 12, right: 18, left: 14, bottom: 28 }}><defs><linearGradient id={`${areaId}-one`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4F46E5" stopOpacity={0.28} /><stop offset="100%" stopColor="#4F46E5" stopOpacity={0.02} /></linearGradient><linearGradient id={`${areaId}-two`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16A34A" stopOpacity={0.22} /><stop offset="100%" stopColor="#16A34A" stopOpacity={0.02} /></linearGradient></defs><CartesianGrid stroke="#E8ECF4" strokeDasharray="4 4" vertical={false} /><XAxis dataKey={x} tick={{ fontSize: 11, fill: "#64748B" }} /><YAxis width={money ? 88 : 48} tick={{ fontSize: 11, fill: "#64748B" }} tickFormatter={(value) => money ? `₹${Number(value || 0).toLocaleString("en-IN")}` : Number(value || 0).toLocaleString("en-IN")} /><Tooltip formatter={(value, name) => [money ? formatMoney(value) : Number(value || 0).toLocaleString("en-IN"), name]} /><Area type="monotone" dataKey={y} name={y === "value" && money ? "Purchase amount" : y} stroke="#4F46E5" strokeWidth={2.5} fill={`url(#${areaId}-one)`} activeDot={{ r: 5 }} animationDuration={1000} />{second && <Area type="monotone" dataKey={second} name={second} stroke="#16A34A" strokeWidth={2.25} fill={`url(#${areaId}-two)`} activeDot={{ r: 5 }} animationDuration={1000} />}</AreaChart></ResponsiveContainer></div> : <Empty />}</Section>;
     return <Section title={title}>{data.length ? <div className="h-80 min-w-0"><ResponsiveContainer width="100%" height="100%"><BarChart data={data} margin={{ top: 10, right: 18, left: 22, bottom: 42 }} barCategoryGap="28%"><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey={x} interval={0} angle={-25} textAnchor="end" height={62} tick={{ fontSize: 11, fill: "#475569" }} /><YAxis width={78} tick={{ fontSize: 11, fill: "#475569" }} tickFormatter={(value) => money ? `₹${Number(value || 0).toLocaleString("en-IN")}` : value} /><Tooltip formatter={(value, name) => [money ? formatMoney(value) : value, name]} /><Bar dataKey={y} fill="#2563EB" maxBarSize={42} />{second && <Bar dataKey={second} fill="#F59E0B" maxBarSize={42} />}</BarChart></ResponsiveContainer></div> : <Empty />}</Section>;
   }
 
   function PieBlock({ title, data = [], name }) {
-    return <Section title={title}>{data.length ? <div className="h-72"><ResponsiveContainer><PieChart><Pie data={data} dataKey="count" nameKey={name} outerRadius={90} label>{data.map((entry, index) => <Cell key={entry[name]} fill={["#2563EB", "#10B981", "#F59E0B", "#EF4444", "#64748B"][index % 5]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div> : <Empty />}</Section>;
+    return <Section title={title}>{data.length ? <div className="h-72"><ResponsiveContainer><PieChart><Pie data={data} dataKey="count" nameKey={name} innerRadius={54} outerRadius={88} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{data.map((entry, index) => <Cell key={entry[name]} fill={["#4F46E5", "#16A34A", "#F59E0B", "#EF4444", "#64748B"][index % 5]} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={28} /></PieChart></ResponsiveContainer></div> : <Empty />}</Section>;
   }
 
   function CreditManagement({ data, form, setForm, preview, setPreview, setImage, createReward, updateRedemption, reload }) {
@@ -882,7 +1003,7 @@ import { formatTitleCase } from "../utils/textFormatter";
             <div className="md:col-span-2"><Button type="submit"><Gift size={16} /> Save Reward</Button></div>
           </FormGrid>
         </Section>
-        <Section title="Reward list">{rewards.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{rewards.map((reward) => <div key={reward.id} className="rounded-md border border-slate-200 p-4">{reward.image ? <img src={fileUrl(reward.image)} alt={reward.title} className="mb-3 h-32 w-full rounded-md object-cover" /> : <div className="mb-3 h-32 rounded-md bg-slate-100" />}<div className="flex justify-between gap-3"><div><p className="font-semibold">{reward.title}</p><p className="text-sm text-slate-500">{reward.category || "General"}</p></div><StatusBadge value={reward.status} /></div><p className="mt-2 text-sm text-slate-600">{reward.description}</p><p className="mt-3 font-semibold">{reward.requiredCoins} coins | {reward.quantity} left</p></div>)}</div> : <Empty />}</Section>
+        <Section title="Reward list">{rewards.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{rewards.map((reward) => <div key={reward.id} className="rounded-md border border-slate-200 p-4">{reward.image ? <img src={fileUrl(reward.image)} alt={reward.title} className="mb-3 h-32 w-full rounded-md object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <div className="mb-3 h-32 rounded-md bg-slate-100" />}<div className="flex justify-between gap-3"><div><p className="font-semibold">{reward.title}</p><p className="text-sm text-slate-500">{reward.category || "General"}</p></div><StatusBadge value={reward.status} /></div><p className="mt-2 text-sm text-slate-600">{reward.description}</p><p className="mt-3 font-semibold">{reward.requiredCoins} coins | {reward.quantity} left</p></div>)}</div> : <Empty />}</Section>
         <Section title="Redemption requests">{redemptions.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Dealer", "Reward", "Coins", "Status", "Requested", "Provide Date", "Actions"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{redemptions.map((r) => <tr key={r.id} className="border-t border-slate-100"><td className="p-3">{r.Dealer?.dealerName || r.dealerId}</td><td>{r.reward?.title}</td><td>{r.coinsUsed}</td><td><StatusBadge value={r.status} /></td><td>{new Date(r.requestedAt || r.createdAt).toLocaleString()}</td><td><input className="rounded-md border border-slate-200 px-2 py-1" type="date" defaultValue={r.expectedProvideDate || ""} onBlur={(e) => e.target.value && updateRedemption(r.id, { status: r.status, expectedProvideDate: e.target.value })} /></td><td className="space-x-2"><Button variant="ghost" onClick={() => updateRedemption(r.id, { status: "APPROVED" })}>Approve</Button><Button onClick={() => updateRedemption(r.id, { status: "PROVIDED" })}>Provided</Button><Button variant="danger" onClick={() => updateRedemption(r.id, { status: "CANCELLED", adminNote: prompt("Cancel note") || "" })}>Cancel</Button></td></tr>)}</tbody></table></div> : <Empty />}</Section>
       </div>
     );
@@ -897,7 +1018,7 @@ import { formatTitleCase } from "../utils/textFormatter";
         return text.replace(/\b\w/g, (letter) => letter.toUpperCase());
       }
     };
-    return <Section title={typeof title === 'string' ? formatTitleCase(title) : title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{columnLabel(c)}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr className={`border-t border-slate-100 ${i % 2 ? "bg-stone-50/70" : "bg-white"} hover:bg-slate-50`} key={row.id || i}>{cols.map((c) => <td className="p-3" key={c}>{renderCell ? renderCell(row, c) : c === "quantity" || c === "quantitySold" || c === "stockQuantity" ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{row[c] ?? 0}</span><span className="text-xs text-slate-500">{c === "quantitySold" ? "sold" : "units"}</span></span> : c === "product" || c === "productName" ? <span className="font-bold text-slate-900">{String(row[c] ?? "-")}</span> : String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div> : <Empty />}</Section>;
+    return <Section title={typeof title === 'string' ? formatTitleCase(title) : title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{columnLabel(c)}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr className={`border-t border-slate-100 ${i % 2 ? "bg-stone-50/70" : "bg-white"} hover:bg-slate-50`} key={row.id || i}>{cols.map((c) => { const customCell = renderCell?.(row, c); return <td className="p-3" key={c}>{customCell ?? (c === "quantity" || c === "quantitySold" || c === "stockQuantity" ? <span className="inline-flex items-center gap-1.5"><span className="rounded bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{row[c] ?? 0}</span><span className="text-xs text-slate-500">{c === "quantitySold" ? "sold" : "units"}</span></span> : c === "product" || c === "productName" ? <span className="font-bold text-slate-900">{String(row[c] ?? "-")}</span> : String(row[c] ?? ""))}</td>; })}</tr>)}</tbody></table></div> : <Empty />}</Section>;
   }
 
   function AdminDealerSales({ data = {} }) {
@@ -915,7 +1036,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           <MiniList title="Dealer sales performance" rows={stats.dealerPerformance || []} left="dealerName" right="quantitySold" />
         </div>
         <Section title="Dealer sales records">
-          {rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Dealer", "Product + SKU", "Quantity", "Stock Before", "Stock After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((sale) => <tr className="border-t border-slate-100" key={sale.id}><td className="p-3">{sale.saleDate}</td><td>{sale.Dealer?.dealerName || `Dealer #${sale.dealerId}`}</td><td><div className="flex items-center gap-2">{sale.Product?.image && <img src={fileUrl(sale.Product.image)} alt="" className="h-9 w-9 rounded-md object-cover" />}<span>{productNameWithSku(sale.Product, sale.ProductVariant || sale)}<span className="block text-xs text-slate-500">{sale.variantName ? `${sale.variantName} / ${sale.colorName || "-"}` : "Standard"}</span></span></div></td><td>{sale.quantitySold}</td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No dealer sales recorded yet" />}
+          {rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Dealer", "Product + SKU", "Quantity", "Stock Before", "Stock After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((sale) => <tr className="border-t border-slate-100" key={sale.id}><td className="p-3">{sale.saleDate}</td><td>{sale.Dealer?.dealerName || `Dealer #${sale.dealerId}`}</td><td><div className="flex items-center gap-2">{sale.Product?.image && <img src={fileUrl(sale.Product.image)} alt="" className="h-9 w-9 rounded-md object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />}<span>{productNameWithSku(sale.Product, sale.ProductVariant || sale)}<span className="block text-xs text-slate-500">{sale.variantName ? `${sale.variantName} / ${sale.colorName || "-"}` : "Standard"}</span></span></div></td><td>{sale.quantitySold}</td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No dealer sales recorded yet" />}
         </Section>
       </div>
     );
@@ -987,10 +1108,10 @@ import { formatTitleCase } from "../utils/textFormatter";
             return (
               <button key={product.id} type="button" onClick={() => setSelectedProduct(product)} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-card transition hover:-translate-y-1 hover:border-indigo-200 hover:shadow-card-hover">
                 <div className="flex gap-4">
-                  {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-20 w-24 rounded-xl object-cover" /> : <div className="grid h-20 w-24 place-items-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-400">No image</div>}
+                  {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-20 w-24 rounded-xl object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <div className="grid h-20 w-24 place-items-center rounded-xl bg-slate-100 text-xs font-semibold text-slate-400">No image</div>}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-bold text-slate-950 group-hover:text-indigo-700">{productNameWithSku(product)}</p>
-                    <p className="mt-1 flex items-center truncate font-mono text-xs text-indigo-700"><span>SKU: {product.sku || "-"}</span><CopySku value={product.sku} /></p>
+                    <p className="truncate font-bold text-slate-950 group-hover:text-indigo-700" title={product.productName}>{product.productName}</p>
+                    <p className="mt-1 truncate"><CompactSku value={product.sku} /></p>
                     <p className="mt-1 text-xs text-slate-500">{product.category || "Uncategorized"}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2"><StatusBadge value={stockStatus} /><span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{qty} in company stock</span></div>
                   </div>
@@ -1014,14 +1135,15 @@ import { formatTitleCase } from "../utils/textFormatter";
           return {
             dealer: s.Dealer?.dealerName || "Dealer",
             location: [s.Dealer?.area, s.Dealer?.city].filter(Boolean).join(", "),
-            product: productNameWithSku(s.Product, s.ProductVariant || s),
+            product: s.Product?.productName || "Product",
+            sku: fullVariantSku(s.Product || { sku: "-" }, s.ProductVariant || s),
             variant: s.variantName || "-",
             color: s.colorName || "-",
             quantity: qty,
             lowStockLimit: limit,
             status: qty === 0 ? "Out of Stock" : qty <= limit ? "Low Stock" : "In Stock"
           };
-        })} cols={["dealer", "location", "product", "variant", "color", "quantity", "lowStockLimit", "status"]} />
+        })} cols={["dealer", "location", "product", "sku", "variant", "color", "quantity", "lowStockLimit", "status"]} renderCell={(row, column) => column === "sku" ? <CompactSku value={row.sku} /> : undefined} />
         {selectedProduct && <ProductDetailsModal product={selectedProduct} onClose={() => setSelectedProduct(null)} />}
       </div>
     );
@@ -1036,8 +1158,8 @@ import { formatTitleCase } from "../utils/textFormatter";
       <div className="rounded-md border border-slate-200 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="font-semibold text-slate-900">{productNameWithSku(product)}</p>
-            <p className="text-xs text-slate-500">Main SKU <span className="font-mono">{product.sku || "-"}</span><CopySku value={product.sku} /> | Low stock limit {limit}</p>
+            <p className="font-semibold text-slate-900" title={product.productName}>{product.productName || "Product"}</p>
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500"><CompactSku value={product.sku} /><span>Low stock limit {limit}</span></p>
           </div>
           <StatusBadge value={low ? "low" : "active"} />
         </div>
@@ -1058,7 +1180,6 @@ import { formatTitleCase } from "../utils/textFormatter";
   function DeliveryManagement({ rows = [], updateOrder, filter = "all", setFilter, page = 1, setPage }) {
     const next = { approved: "packing", packing: "shipping", shipping: "out_for_delivery", out_for_delivery: "delivered" };
     const dealerTitle = (order) => `${order.Dealer?.dealerName || "Dealer"}${order.Dealer?.area || order.Dealer?.city ? ` - ${[order.Dealer?.area, order.Dealer?.city].filter(Boolean).join(", ")}` : ""}`;
-    const products = (order) => order.items?.map(orderItemLabel).join(", ");
     const pageSize = 8;
     const filtered = rows.filter((order) => filter === "all" || order.status === filter);
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -1067,18 +1188,27 @@ import { formatTitleCase } from "../utils/textFormatter";
     return (
       <Section title="Delivery management" actions={<div className="flex flex-wrap gap-2">{["all", "approved", "packing", "shipping", "out_for_delivery", "delivered"].map((status) => <button key={status} onClick={() => { setFilter(status); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>}>
         {visible.length ? <><div className="grid gap-4 xl:grid-cols-2">{visible.map((order) => (
-          <div key={order.id} className="rounded-md border border-slate-200 bg-white p-4 shadow-soft">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <div key={order.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
-                <p className="font-semibold text-slate-900">{dealerTitle(order)}</p>
-                <p className="text-sm text-slate-500">{products(order)}</p>
-                <p className="mt-1 text-xs text-slate-400">Reference: {order.orderNumber}</p>
+                <p className="font-bold text-slate-900 text-base">{dealerTitle(order)}</p>
+                <p className="mt-0.5 text-xs text-slate-500">Reference: #{order.orderNumber} · Ordered: {new Date(order.createdAt).toLocaleDateString()}</p>
               </div>
               <StatusBadge value={order.status} />
             </div>
-            <DeliveryTimeline order={order} />
-            <div className="mt-4 flex flex-wrap gap-2">
-              {order.status === "delivered" ? <span className="rounded-md bg-green-50 px-3 py-2 text-sm font-semibold text-green-700">Delivered</span> : <Button onClick={() => updateOrder(order.id, next[order.status])}>Mark as {next[order.status]?.replaceAll("_", " ")}</Button>}
+            <OrderVisualItems items={order.items} />
+            <div className="mt-4 pt-3 border-t border-slate-100">
+              <DeliveryTimeline order={order} />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-slate-600">
+                  Expected delivery: <strong className="text-slate-800">{order.deliveredDate || "-"}</strong>
+                </span>
+                {order.status === "delivered" ? (
+                  <span className="rounded-md bg-green-50 border border-green-200 px-3 py-1.5 text-xs font-bold text-green-700">Delivered</span>
+                ) : (
+                  <Button onClick={() => updateOrder(order.id, next[order.status])}>Mark as {next[order.status]?.replaceAll("_", " ")}</Button>
+                )}
+              </div>
             </div>
           </div>
         ))}</div><PaginationControls page={safePage} setPage={setPage} totalPages={totalPages} totalItems={filtered.length} pageSize={pageSize} /></> : <Empty text="No deliveries match this filter" />}
@@ -1354,7 +1484,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                         {m.attachmentUrl && (
                           <div className="mt-2">
                             {isImage(m.attachmentUrl) ? (
-                              <a href={fileUrl(m.attachmentUrl)} target="_blank" rel="noreferrer"><img src={fileUrl(m.attachmentUrl)} alt={m.attachmentName} className="max-w-full rounded-lg shadow-sm border border-slate-200/50 max-h-48 object-contain" /></a>
+                              <a href={fileUrl(m.attachmentUrl)} target="_blank" rel="noreferrer"><img src={fileUrl(m.attachmentUrl)} alt={m.attachmentName} className="max-w-full rounded-lg shadow-sm border border-slate-200/50 max-h-48 object-contain" onError={(e) => { e.currentTarget.style.display = "none"; }} /></a>
                             ) : (
                               <a href={fileUrl(m.attachmentUrl)} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium underline ${mine ? "bg-indigo-700 text-indigo-50" : "bg-slate-50 text-slate-700"}`}><Paperclip size={14} /> {m.attachmentName || "Attachment"}</a>
                             )}
@@ -1398,7 +1528,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     );
   }
 
-  function OrderTable({ rows, updateOrder, approveOrder, schedules, setSchedules, filter = "all", setFilter, page = 1, setPage }) {
+  function OrderTable({ rows, updateOrder, approveOrder, approvingOrderId, schedules, setSchedules, filter = "all", setFilter, page = 1, setPage }) {
     const setSchedule = (id, key, value) => setSchedules({ ...schedules, [id]: { ...(schedules[id] || {}), [key]: value } });
     const dealerTitle = (order) => `${order.Dealer?.dealerName || "Dealer"}${order.Dealer?.area || order.Dealer?.city ? ` - ${[order.Dealer?.area, order.Dealer?.city].filter(Boolean).join(", ")}` : ""}`;
     const pageSize = 10;
@@ -1406,11 +1536,67 @@ import { formatTitleCase } from "../utils/textFormatter";
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
     const safePage = Math.min(page, totalPages);
     const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
-    return <Section title="Order & delivery management" actions={<div className="flex flex-wrap gap-2">{["all", "pending", "approved", "packing", "shipping", "out_for_delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => { setFilter(status); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>}>{visible.length ? <><div className="space-y-4">{visible.map((o) => {
-      const schedule = schedules[o.id] || {};
-      const ready = schedule.packingDate && schedule.shippingDate && schedule.outForDeliveryDate && schedule.deliveredDate;
-      return <div key={o.id} className="rounded-md border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{dealerTitle(o)} · {formatMoney(o.totalAmount)}</p><p className="text-sm text-slate-500">Order Date: {new Date(o.createdAt).toLocaleDateString()} · {o.status}</p><p className="mt-1 text-xs text-slate-400">Reference: {o.orderNumber}</p></div><div className="flex flex-wrap gap-2">{o.status === "pending" ? <><Button disabled={!ready} onClick={() => approveOrder(o.id)}>Approve Order</Button><Button variant="ghost" onClick={() => updateOrder(o.id, "rejected")}>Reject</Button></> : <StatusBadge value={o.status} />}</div></div><div className="mt-3 text-sm font-semibold text-slate-700">{o.items?.map(orderItemLabel).join(", ")}</div>{o.status === "pending" && <div className="mt-4 grid gap-3 md:grid-cols-4">{["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"].map((key) => <TextField key={key} label={key.replace(/([A-Z])/g, " $1")} type="date" value={schedule[key] || ""} onChange={(e) => setSchedule(o.id, key, e.target.value)} />)}</div>}{o.status === "approved" && <div className="mt-4 rounded-md bg-green-50 p-3 text-sm font-semibold text-green-700">Approved. Invoice generated automatically. Continue delivery updates in Delivery.</div>}<div className="mt-4 grid gap-2 md:grid-cols-4">{["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"].map((key) => o[key] && <div key={key} className="rounded-md bg-slate-50 p-2 text-xs"><span className="font-semibold">{key.replace(/([A-Z])/g, " $1")}:</span> {o[key]}</div>)}</div></div>;
-    })}</div><PaginationControls page={safePage} setPage={setPage} totalPages={totalPages} totalItems={filtered.length} pageSize={pageSize} /></> : <Empty text="No orders match this filter" />}</Section>;
+    return (
+      <Section title="Order & delivery management" actions={<div className="flex flex-wrap gap-2">{["all", "pending", "approved", "packing", "shipping", "out_for_delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => { setFilter(status); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>}>
+        {visible.length ? (
+          <>
+            <div className="space-y-4">
+              {visible.map((o) => {
+                const schedule = schedules[o.id] || {};
+                const ready = schedule.packingDate && schedule.shippingDate && schedule.outForDeliveryDate && schedule.deliveredDate;
+                const isApproving = approvingOrderId === o.id;
+                return (
+                  <div key={o.id} className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft">
+                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                      <div>
+                        <p className="font-bold text-slate-900 text-base">{dealerTitle(o)} · <span className="text-indigo-700 font-extrabold">{formatMoney(o.totalAmount)}</span></p>
+                        <p className="mt-0.5 text-xs text-slate-500">Order Date: {new Date(o.createdAt).toLocaleDateString()} · Status: <span className="font-semibold capitalize">{o.status?.replaceAll("_", " ")}</span></p>
+                        <p className="mt-0.5 text-xs text-slate-400 font-mono">Reference: #{o.orderNumber}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {o.status === "pending" ? (
+                          <>
+                            <Button disabled={!ready || isApproving} onClick={() => approveOrder(o.id)}>
+                              {isApproving ? "Approving..." : "Approve Order"}
+                            </Button>
+                            <Button variant="ghost" disabled={isApproving} onClick={() => updateOrder(o.id, "rejected")}>Reject</Button>
+                          </>
+                        ) : (
+                          <StatusBadge value={o.status} />
+                        )}
+                      </div>
+                    </div>
+                    <OrderVisualItems items={o.items} />
+                    {o.status === "pending" && (
+                      <div className="mt-4 grid gap-3 md:grid-cols-4">
+                        {["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"].map((key) => (
+                          <TextField key={key} label={key.replace(/([A-Z])/g, " $1")} type="date" value={schedule[key] || ""} onChange={(e) => setSchedule(o.id, key, e.target.value)} />
+                        ))}
+                      </div>
+                    )}
+                    {o.status === "approved" && (
+                      <div className="mt-4 rounded-md bg-green-50 border border-green-200 p-3 text-xs font-semibold text-green-700">
+                        Approved. Invoice generated automatically. Continue delivery updates in Delivery.
+                      </div>
+                    )}
+                    <div className="mt-4 grid gap-2 md:grid-cols-4">
+                      {["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"].map((key) => o[key] && (
+                        <div key={key} className="rounded-md bg-slate-50 border border-slate-200/80 p-2 text-xs">
+                          <span className="font-semibold text-slate-500">{key.replace(/([A-Z])/g, " $1")}:</span> <strong className="text-slate-800">{o[key]}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <PaginationControls page={safePage} setPage={setPage} totalPages={totalPages} totalItems={filtered.length} pageSize={pageSize} />
+          </>
+        ) : (
+          <Empty text="No orders match this filter" />
+        )}
+      </Section>
+    );
   }
 
   function FinanceTable({ rows = [], dealers = [], filter, setFilter, sendReminder }) {
@@ -1500,7 +1686,15 @@ import { formatTitleCase } from "../utils/textFormatter";
             const variant = item.ProductVariant || item;
             return (
               <div key={item.id || `${item.productId}-${item.productVariantId}`} className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[1fr_auto_auto]">
-                <div><p className="font-bold text-slate-950">{productNameWithSku(item.Product, variant)}</p><p className="text-xs text-slate-500">{item.variantName ? `${item.variantName} / ${item.colorName || "-"}` : "Standard"} {item.Product?.category ? `| ${item.Product.category}` : ""}</p></div>
+                <div>
+                  <p className="font-bold text-slate-950">{item.Product?.productName || "Product"}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <CompactSku value={fullVariantSku(item.Product || {}, variant)} />
+                    <span className="text-xs text-slate-500 font-medium">
+                      Variant: {item.variantName ? `${item.variantName} / ${item.colorName || "-"}` : "Standard"} {item.Product?.category ? `| ${item.Product.category}` : ""}
+                    </span>
+                  </div>
+                </div>
                 <div className="rounded-lg bg-slate-50 px-3 py-2 font-semibold text-slate-700">Quantity: {item.quantity}</div>
                 <div className="rounded-lg bg-indigo-50 px-3 py-2 font-semibold text-indigo-700">{formatMoney(item.lineTotal || item.total || Number(item.price || item.unitPrice || 0) * Number(item.quantity || 0))}</div>
               </div>

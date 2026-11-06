@@ -25,6 +25,7 @@ const {
 } = require("../models");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
 const { awardCreditCoinsForPayment, getOrCreateWallet } = require("../utils/credit");
+const cacheService = require("../services/cacheService");
 
 function daysUnpaid(payment) {
   if (payment.paymentStatus === "paid") return 0;
@@ -36,43 +37,63 @@ function daysUnpaid(payment) {
 const scope = (req) => ({ companyId: req.user.companyId, dealerId: req.user.dealerId });
 
 exports.dashboard = asyncHandler(async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const monthStart = `${today.slice(0, 7)}-01`;
-  const [stockRows, lowStockCount, pendingOrders, approvedOrders, deliveredOrders, rejectedOrders, purchaseRows, pendingPayments, todaySalesRows, monthSalesRows, recentSales, wallet, monthEarned, redeemed, affordableRewards] = await Promise.all([
-    DealerInventory.findAll({ where: scope(req), attributes: [[fn("SUM", col("quantity")), "total"]] }),
-    DealerInventory.count({ where: { ...scope(req), quantity: { [Op.lte]: col("lowStockLimit") } } }),
-    Order.count({ where: { ...scope(req), status: "pending" } }),
-    Order.count({ where: { ...scope(req), status: "approved" } }),
-    Order.count({ where: { ...scope(req), status: "delivered" } }),
-    Order.count({ where: { ...scope(req), status: "rejected" } }),
-    Order.findAll({ where: { ...scope(req), status: { [Op.ne]: "rejected" } }, attributes: [[fn("SUM", col("totalAmount")), "total"]] }),
-    Payment.count({ where: { ...scope(req), paymentStatus: "pending" } }),
-    DealerSale.findAll({ where: { ...scope(req), saleDate: today }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
-    DealerSale.findAll({ where: { ...scope(req), saleDate: { [Op.gte]: monthStart } }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
-    DealerSale.findAll({ where: scope(req), include: [Product, ProductVariant], order: [["createdAt", "DESC"]], limit: 5 }),
-    DealerCreditWallet.findOne({ where: scope(req) }),
-    DealerCreditTransaction.sum("coins", { where: { ...scope(req), type: "EARN", createdAt: { [Op.gte]: monthStart } } }),
-    DealerCreditTransaction.sum("coins", { where: { ...scope(req), type: "REDEEM" } }),
-    CreditReward.count({ where: { companyId: req.user.companyId, status: "active", quantity: { [Op.gt]: 0 } } })
-  ]);
-  res.json({
-    ownTotalStock: Number(stockRows[0]?.get("total") || 0),
-    lowStockCount,
-    pendingOrders,
-    approvedOrders,
-    deliveredOrders,
-    rejectedOrders,
-    totalPurchaseAmount: Number(purchaseRows[0]?.get("total") || 0),
-    pendingPayments,
-    todaySalesUnits: Number(todaySalesRows[0]?.get("total") || 0),
-    monthSalesUnits: Number(monthSalesRows[0]?.get("total") || 0),
-    recentSales,
-    creditBalance: Number(wallet?.balance || 0),
-    coinsEarnedThisMonth: Number(monthEarned || 0),
-    coinsRedeemed: Number(redeemed || 0),
-    affordableRewardsCount: Number(wallet?.balance || 0) ? await CreditReward.count({ where: { companyId: req.user.companyId, status: "active", quantity: { [Op.gt]: 0 }, requiredCoins: { [Op.lte]: Number(wallet?.balance || 0) } } }) : 0,
-    activeRewardsCount: affordableRewards
+  const cacheKey = cacheService.key(req.user.companyId, "dealer_dashboard", req.user.dealerId);
+  const data = await cacheService.getOrSet(cacheKey, 15, async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const wallet = await DealerCreditWallet.findOne({ where: scope(req) });
+    const balance = Number(wallet?.balance || 0);
+
+    const [stockRows, lowStockCount, orderCounts, purchaseRows, pendingPayments, todaySalesRows, monthSalesRows, recentSales, monthEarned, redeemed, activeRewards, affordableRewardsCount] = await Promise.all([
+      DealerInventory.findAll({ where: scope(req), attributes: [[fn("SUM", col("quantity")), "total"]] }),
+      DealerInventory.count({ where: { ...scope(req), quantity: { [Op.lte]: col("lowStockLimit") } } }),
+      Order.findAll({
+        where: scope(req),
+        attributes: ["status", [fn("COUNT", col("id")), "count"]],
+        group: ["status"],
+        raw: true
+      }),
+      Order.findAll({ where: { ...scope(req), status: { [Op.ne]: "rejected" } }, attributes: [[fn("SUM", col("totalAmount")), "total"]] }),
+      Payment.count({ where: { ...scope(req), paymentStatus: "pending" } }),
+      DealerSale.findAll({ where: { ...scope(req), saleDate: today }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
+      DealerSale.findAll({ where: { ...scope(req), saleDate: { [Op.gte]: monthStart } }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
+      DealerSale.findAll({
+        where: scope(req),
+        include: [
+          { model: Product, attributes: ["id", "productName", "sku", "image"] },
+          { model: ProductVariant, attributes: ["id", "variantName", "colorName", "image"] }
+        ],
+        order: [["createdAt", "DESC"]],
+        limit: 5
+      }),
+      DealerCreditTransaction.sum("coins", { where: { ...scope(req), type: "EARN", createdAt: { [Op.gte]: monthStart } } }),
+      DealerCreditTransaction.sum("coins", { where: { ...scope(req), type: "REDEEM" } }),
+      CreditReward.count({ where: { companyId: req.user.companyId, status: "active", quantity: { [Op.gt]: 0 } } }),
+      balance > 0 ? CreditReward.count({ where: { companyId: req.user.companyId, status: "active", quantity: { [Op.gt]: 0 }, requiredCoins: { [Op.lte]: balance } } }) : Promise.resolve(0)
+    ]);
+
+    const orderMap = Object.fromEntries(orderCounts.map((o) => [o.status, Number(o.count || 0)]));
+
+    return {
+      ownTotalStock: Number(stockRows[0]?.get("total") || 0),
+      lowStockCount,
+      pendingOrders: orderMap.pending || 0,
+      approvedOrders: orderMap.approved || 0,
+      deliveredOrders: orderMap.delivered || 0,
+      rejectedOrders: orderMap.rejected || 0,
+      totalPurchaseAmount: Number(purchaseRows[0]?.get("total") || 0),
+      pendingPayments,
+      todaySalesUnits: Number(todaySalesRows[0]?.get("total") || 0),
+      monthSalesUnits: Number(monthSalesRows[0]?.get("total") || 0),
+      recentSales,
+      creditBalance: balance,
+      coinsEarnedThisMonth: Number(monthEarned || 0),
+      coinsRedeemed: Number(redeemed || 0),
+      affordableRewardsCount: Number(affordableRewardsCount || 0),
+      activeRewardsCount: activeRewards
+    };
   });
+  res.json(data);
 });
 
 exports.availableStock = asyncHandler(async (req, res) => {
@@ -267,11 +288,14 @@ exports.createSale = asyncHandler(async (req, res) => {
   const sale = await sequelize.transaction(async (transaction) => {
     const inventory = await DealerInventory.findOne({
       where: { ...scope(req), productId, productVariantId },
-      include: [Product, ProductVariant],
       lock: transaction.LOCK.UPDATE,
       transaction
     });
-    const exchangeInventory = await DealerExchangeInventory.findOne({ where: { companyId: req.user.companyId, dealerId: req.user.dealerId, productId, productVariantId }, lock: transaction.LOCK.UPDATE, transaction });
+    const exchangeInventory = await DealerExchangeInventory.findOne({
+      where: { companyId: req.user.companyId, dealerId: req.user.dealerId, productId, productVariantId },
+      lock: transaction.LOCK.UPDATE,
+      transaction
+    });
     if (!inventory && !exchangeInventory) { const error = new Error("Product is not available in your inventory"); error.status = 404; throw error; }
     const mainStock = Number(inventory?.quantity || 0);
     const exchangeStock = Number(exchangeInventory?.quantity || 0);
@@ -305,7 +329,9 @@ exports.createSale = asyncHandler(async (req, res) => {
 
     const limit = Number(inventory?.lowStockLimit || 0);
     if (stockAfter <= limit) {
-      const productName = inventory?.Product?.productName || "Product";
+      let productName = "Product";
+      const product = await Product.findByPk(productId, { transaction });
+      if (product?.productName) productName = product.productName;
       const message = `${productName} has low stock in your inventory. Current stock: ${stockAfter}. Minimum limit: ${limit}.`;
       const existing = await InternalNotification.findOne({
         where: {

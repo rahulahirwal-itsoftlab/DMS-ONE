@@ -8,10 +8,20 @@ export const api = axios.create({
 
 export const API_ORIGIN = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/api\/?$/, "");
 
-export const fileUrl = (path) => {
-  if (!path) return "";
-  const normalized = String(path).replaceAll("\\", "/");
-  if (normalized.startsWith("http")) return normalized;
+export const fileUrl = (path, options = {}) => {
+  if (!path || typeof path !== "string") return "";
+  let normalized = String(path).trim().replaceAll("\\", "/");
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    if (normalized.includes("res.cloudinary.com") && normalized.includes("/upload/")) {
+      if (!normalized.includes("/f_auto,q_auto")) {
+        const transform = options.width
+          ? `upload/f_auto,q_auto,w_${options.width},c_limit/`
+          : "upload/f_auto,q_auto/";
+        normalized = normalized.replace("/upload/", `/${transform}`);
+      }
+    }
+    return normalized;
+  }
   return `${API_ORIGIN}${normalized.startsWith("/") ? normalized : `/${normalized}`}`;
 };
 

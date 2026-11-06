@@ -27,10 +27,14 @@ const columns = {
     forgotPasswordOtp: { type: DataTypes.STRING(10), allowNull: true },
     forgotPasswordOtpExpiry: { type: DataTypes.DATE, allowNull: true },
     passwordChangeRequired: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    passwordChangedAt: { type: DataTypes.DATE, allowNull: true }
+    passwordChangedAt: { type: DataTypes.DATE, allowNull: true },
+    avatar: { type: DataTypes.STRING, allowNull: true },
+    avatarPublicId: { type: DataTypes.STRING, allowNull: true }
   },
   Companies: {
     orgId: { type: DataTypes.STRING, allowNull: true, unique: true },
+    logo: { type: DataTypes.STRING, allowNull: true },
+    logoPublicId: { type: DataTypes.STRING, allowNull: true },
     phone: { type: DataTypes.STRING, allowNull: true },
     address: { type: DataTypes.TEXT, allowNull: true },
     city: { type: DataTypes.STRING, allowNull: true },
@@ -54,6 +58,7 @@ const columns = {
   },
   Products: {
     image: { type: DataTypes.STRING },
+    imagePublicId: { type: DataTypes.STRING, allowNull: true },
     description: { type: DataTypes.TEXT },
     manufacturingDate: { type: DataTypes.DATEONLY, allowNull: true },
     expiryDate: { type: DataTypes.DATEONLY, allowNull: true },
@@ -92,7 +97,8 @@ const columns = {
     creditCoinsEarned: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }
   },
   product_variants: {
-    image: { type: DataTypes.STRING, allowNull: true }
+    image: { type: DataTypes.STRING, allowNull: true },
+    imagePublicId: { type: DataTypes.STRING, allowNull: true }
   },
   Payments: {
     invoiceNumber: { type: DataTypes.STRING, allowNull: true },
@@ -101,12 +107,17 @@ const columns = {
     invoiceStatus: { type: DataTypes.STRING, defaultValue: "generated" },
     orderApprovedAt: { type: DataTypes.DATE },
     invoiceFile: { type: DataTypes.STRING },
+    invoicePublicId: { type: DataTypes.STRING, allowNull: true },
     paymentRequestSentAt: { type: DataTypes.DATE },
     paidAt: { type: DataTypes.DATE },
     paidBy: { type: DataTypes.INTEGER },
     approvedBy: { type: DataTypes.INTEGER },
     creditAwarded: { type: DataTypes.BOOLEAN, defaultValue: false },
     creditAwardedAt: { type: DataTypes.DATE }
+  },
+  credit_rewards: {
+    image: { type: DataTypes.STRING, allowNull: true },
+    imagePublicId: { type: DataTypes.STRING, allowNull: true }
   },
   Messages: {
     isRead: { type: DataTypes.BOOLEAN, defaultValue: false },

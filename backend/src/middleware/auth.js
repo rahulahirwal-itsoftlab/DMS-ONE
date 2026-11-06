@@ -2,6 +2,7 @@ const jwt = require("jsonwebtoken");
 const { User, Company, Dealer } = require("../models");
 const { hasAnyRole, normalizeRole } = require("./roles");
 const { superAdminManagerRolesEnabled } = require("../utils/featureFlags");
+const cacheService = require("../services/cacheService");
 
 const dealerManagerRolesEnabled = () => process.env.ENABLE_DEALER_MANAGER_ROLES !== "false";
 const subscriptionBlockedMessage = "Your organization account is inactive. Please contact the administrator.";
@@ -16,15 +17,29 @@ const protect = async (req, res, next) => {
     if (!token) return res.status(401).json({ message: "Authentication required" });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || "dms_super_secret_key");
-    const user = await User.findByPk(decoded.id, { attributes: { exclude: ["password", "twoFactorOtp", "twoFactorOtpExpiry", "passwordResetOtp", "passwordResetOtpExpiry"] } });
-    if (!user) return res.status(401).json({ message: "Invalid user" });
+    const cacheKey = cacheService.key("global", "auth_user", decoded.id);
+    let user = cacheService.get(cacheKey);
+
+    if (!user) {
+      user = await User.findByPk(decoded.id, {
+        attributes: { exclude: ["password", "twoFactorOtp", "twoFactorOtpExpiry", "passwordResetOtp", "passwordResetOtpExpiry"] },
+        include: [
+          { model: Company, attributes: ["id", "status", "endDate"] },
+          { model: Dealer, attributes: ["id", "status"] }
+        ]
+      });
+
+      if (!user) return res.status(401).json({ message: "Invalid user" });
+      cacheService.set(cacheKey, user, 20); // 20s TTL eliminates burst DB queries on dashboard loads
+    }
+
     if (!superAdminManagerRolesEnabled() && retiredSuperAdminRoles.includes(user.role)) {
       return res.status(403).json({ message: retiredSuperAdminRoleMessage });
     }
     if (user.status !== "active") return res.status(403).json({ message: accountSuspendedMessage });
 
     if (user.companyId) {
-      const company = await Company.findByPk(user.companyId);
+      const company = user.Company || (await Company.findByPk(user.companyId));
       const today = new Date().toISOString().slice(0, 10);
       const expired = company?.endDate && String(company.endDate) < today;
       if (!company || ["inactive", "deleted", "blocked", "expired", "pending", "rejected"].includes(company.status) || expired) {
@@ -32,7 +47,7 @@ const protect = async (req, res, next) => {
       }
     }
     if (user.dealerId) {
-      const dealer = await Dealer.findByPk(user.dealerId);
+      const dealer = user.Dealer || (await Dealer.findByPk(user.dealerId));
       if (!dealer || dealer.status !== "active") return res.status(403).json({ message: accountSuspendedMessage });
     }
 
@@ -54,4 +69,14 @@ const requireCompanyScope = (req, res, next) => {
   next();
 };
 
-module.exports = { protect, permit, requireCompanyScope, dealerManagerRolesEnabled, normalizeRole, subscriptionBlockedMessage, accountSuspendedMessage, retiredSuperAdminRoleMessage, retiredSuperAdminRoles };
+module.exports = {
+  protect,
+  permit,
+  requireCompanyScope,
+  dealerManagerRolesEnabled,
+  normalizeRole,
+  subscriptionBlockedMessage,
+  accountSuspendedMessage,
+  retiredSuperAdminRoleMessage,
+  retiredSuperAdminRoles
+};

@@ -26,6 +26,8 @@ const {
   LicensePurchaseRequest
 } = require("../models");
 const { publicPath } = require("../middleware/upload");
+const cloudinaryService = require("../services/cloudinaryService");
+const cacheService = require("../services/cacheService");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
 const { awardCreditCoinsForOrder, creditStatsForCompany, getOrCreateWallet, dateWhere } = require("../utils/credit");
 const { licenseCapacity, licenseLimitError } = require("../utils/licenseService");
@@ -228,15 +230,23 @@ exports.analytics = asyncHandler(async (req, res) => {
   const dealerScope = dealerFilterActive ? { dealerId: scopedDealerIds.length ? scopedDealerIds : [0] } : {};
   const orderWhere = { companyId, ...dealerScope, ...(activityRange ? { createdAt: activityRange } : {}) };
   const saleWhere = { companyId, ...dealerScope, ...(saleRange ? { saleDate: saleRange } : {}) };
-  const [summary, orderCounts, inventory, dealerInventory, payments, dealers, recentOrders, recentPayments, recentMessages, recentDeliveryUpdates, stockRequestMessages, salesRows, todaySalesRows, monthSalesRows, recentLowStockNotifications] = await Promise.all([
+  const [summary, orderCounts, inventory, dealerInventory, payments, dealers, recentOrders, recentPayments, recentMessages, recentDeliveryUpdates, stockRequestMessages, salesRows, todaySalesRows, monthSalesRows, recentLowStockNotifications, scopedOrders] = await Promise.all([
     exports.dashboardData(companyId),
-    Promise.all(statuses.map(async (status) => ({ status, count: await Order.count({ where: { ...orderWhere, status } }) }))),
-    CompanyInventory.findAll({ where: { companyId }, include: [Product], order: [["quantity", "DESC"]] }),
-    DealerInventory.findAll({ where: { companyId, ...dealerScope }, include: [Product, ProductVariant], order: [["quantity", "DESC"]] }),
-    Payment.findAll({ where: { companyId, ...dealerScope, ...(activityRange ? { createdAt: activityRange } : {}) }, include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer], order: [["createdAt", "DESC"]] }),
+    Order.findAll({
+      where: orderWhere,
+      attributes: ["status", [fn("COUNT", col("id")), "count"]],
+      group: ["status"],
+      raw: true
+    }).then((rows) => {
+      const map = Object.fromEntries(rows.map((r) => [r.status, Number(r.count || 0)]));
+      return statuses.map((status) => ({ status, count: map[status] || 0 }));
+    }),
+    CompanyInventory.findAll({ where: { companyId }, include: [{ model: Product, attributes: ["id", "productName", "sku", "price", "image"] }], order: [["quantity", "DESC"]] }),
+    DealerInventory.findAll({ where: { companyId, ...dealerScope }, include: [{ model: Product, attributes: ["id", "productName", "sku", "image"] }, { model: ProductVariant, attributes: ["id", "variantName", "colorName", "image"] }], order: [["quantity", "DESC"]] }),
+    Payment.findAll({ where: { companyId, ...dealerScope, ...(activityRange ? { createdAt: activityRange } : {}) }, include: [{ model: Order, attributes: ["id", "orderNumber", "totalAmount"], include: [{ model: OrderItem, as: "items", attributes: ["id", "quantity", "price"], include: [{ model: Product, attributes: ["id", "productName", "sku"] }, { model: ProductVariant, attributes: ["id", "variantName", "colorName"] }] }] }, { model: Dealer, attributes: ["id", "dealerName", "area", "city"] }], order: [["createdAt", "DESC"]] }),
     Promise.resolve(filteredDealers),
-    Order.findAll({ where: orderWhere, include: [{ model: Dealer, attributes: ["id", "dealerName", "area", "city"] }, { model: OrderItem, as: "items", include: [Product, ProductVariant] }], order: [["createdAt", "DESC"]], limit: 5 }),
-    Payment.findAll({ where: { companyId }, include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer], order: [["createdAt", "DESC"]], limit: 5 }),
+    Order.findAll({ where: orderWhere, include: [{ model: Dealer, attributes: ["id", "dealerName", "area", "city"] }, { model: OrderItem, as: "items", attributes: ["id", "quantity", "price"], include: [{ model: Product, attributes: ["id", "productName", "sku"] }, { model: ProductVariant, attributes: ["id", "variantName", "colorName"] }] }], order: [["createdAt", "DESC"]], limit: 5 }),
+    Payment.findAll({ where: { companyId }, include: [{ model: Order, attributes: ["id", "orderNumber", "totalAmount"], include: [{ model: OrderItem, as: "items", attributes: ["id", "quantity", "price"], include: [{ model: Product, attributes: ["id", "productName", "sku"] }, { model: ProductVariant, attributes: ["id", "variantName", "colorName"] }] }] }, { model: Dealer, attributes: ["id", "dealerName", "area", "city"] }], order: [["createdAt", "DESC"]], limit: 5 }),
     Message.findAll({ where: { companyId }, include: [{ model: User, as: "sender", attributes: ["id", "name", "role"] }], order: [["createdAt", "DESC"]], limit: 5 }),
     DeliveryTracking.findAll({
       include: [{ model: Order, required: true, where: { companyId }, attributes: ["orderNumber", "dealerId"] }],
@@ -244,10 +254,11 @@ exports.analytics = asyncHandler(async (req, res) => {
       limit: 5
     }),
     Message.count({ where: { companyId, messageType: "stock_request" } }),
-    DealerSale.findAll({ where: saleWhere, include: [Product, ProductVariant, Dealer], order: [["saleDate", "DESC"], ["createdAt", "DESC"]] }),
+    DealerSale.findAll({ where: saleWhere, include: [{ model: Product, attributes: ["id", "productName", "sku"] }, { model: ProductVariant, attributes: ["id", "variantName", "colorName"] }, { model: Dealer, attributes: ["id", "dealerName", "area", "city"] }], order: [["saleDate", "DESC"], ["createdAt", "DESC"]] }),
     DealerSale.findAll({ where: { companyId, saleDate: today }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
     DealerSale.findAll({ where: { companyId, saleDate: { [Op.gte]: monthStart } }, attributes: [[fn("SUM", col("quantitySold")), "total"]] }),
-    InternalNotification.findAll({ where: { companyId, type: "LOW_STOCK" }, order: [["createdAt", "DESC"]], limit: 5 })
+    InternalNotification.findAll({ where: { companyId, type: "LOW_STOCK" }, order: [["createdAt", "DESC"]], limit: 5 }),
+    Order.findAll({ where: orderWhere, attributes: ["id", "dealerId", "status", "totalAmount", "createdAt"], include: [{ model: OrderItem, as: "items", attributes: ["quantity"] }] })
   ]);
 
   const sum = (rows, selector) => rows.reduce((total, row) => total + Number(selector(row) || 0), 0);
@@ -257,7 +268,6 @@ exports.analytics = asyncHandler(async (req, res) => {
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
-  const scopedOrders = await Order.findAll({ where: orderWhere, attributes: ["id", "dealerId", "status", "totalAmount", "createdAt"], include: [{ model: OrderItem, as: "items", attributes: ["quantity"] }] });
   const orderTotals = scopedOrders.reduce((acc, order) => {
     acc[order.dealerId] = (acc[order.dealerId] || 0) + Number(order.totalAmount || 0);
     return acc;
@@ -363,32 +373,49 @@ exports.analytics = asyncHandler(async (req, res) => {
 });
 
 exports.dashboardData = async (companyId) => {
-  const [totalDealers, totalProducts, stockRows, lowStockProducts, pendingOrders, approvedOrders, deliveredOrders, rejectedOrders, pendingPayments, revenueRows, pendingAmountRows] = await Promise.all([
-    Dealer.count({ where: { companyId } }),
-    Product.count({ where: { companyId } }),
-    CompanyInventory.findAll({ where: { companyId }, attributes: [[fn("SUM", col("quantity")), "total"]] }),
-    CompanyInventory.count({ where: { companyId, quantity: { [Op.lte]: col("lowStockLimit") } } }),
-    Order.count({ where: { companyId, status: "pending" } }),
-    Order.count({ where: { companyId, status: "approved" } }),
-    Order.count({ where: { companyId, status: "delivered" } }),
-    Order.count({ where: { companyId, status: "rejected" } }),
-    Payment.count({ where: { companyId, paymentStatus: "pending" } }),
-    Payment.findAll({ where: { companyId, paymentStatus: "paid" }, attributes: [[fn("SUM", col("amount")), "total"]] }),
-    Payment.findAll({ where: { companyId, paymentStatus: "pending" }, attributes: [[fn("SUM", col("amount")), "total"]] })
-  ]);
-  return {
-    totalDealers,
-    totalProducts,
-    totalCompanyStock: Number(stockRows[0]?.get("total") || 0),
-    lowStockProducts,
-    pendingOrders,
-    approvedOrders,
-    deliveredOrders,
-    rejectedOrders,
-    pendingPayments,
-    totalRevenue: Number(revenueRows[0]?.get("total") || 0),
-    totalPendingAmount: Number(pendingAmountRows[0]?.get("total") || 0)
-  };
+  const cacheKey = cacheService.key(companyId, "dashboard", "summary");
+  return cacheService.getOrSet(cacheKey, 15, async () => {
+    const [totalDealers, totalProducts, stockRows, lowStockProducts, orderCounts, paymentStats] = await Promise.all([
+      Dealer.count({ where: { companyId } }),
+      Product.count({ where: { companyId } }),
+      CompanyInventory.findAll({ where: { companyId }, attributes: [[fn("SUM", col("quantity")), "total"]] }),
+      CompanyInventory.count({ where: { companyId, quantity: { [Op.lte]: col("lowStockLimit") } } }),
+      Order.findAll({
+        where: { companyId },
+        attributes: ["status", [fn("COUNT", col("id")), "count"]],
+        group: ["status"],
+        raw: true
+      }),
+      Payment.findAll({
+        where: { companyId },
+        attributes: [
+          "paymentStatus",
+          [fn("COUNT", col("id")), "count"],
+          [fn("SUM", col("amount")), "total"]
+        ],
+        group: ["paymentStatus"],
+        raw: true
+      })
+    ]);
+
+    const orderMap = Object.fromEntries(orderCounts.map((o) => [o.status, Number(o.count || 0)]));
+    const paidPayment = paymentStats.find((p) => p.paymentStatus === "paid");
+    const pendingPayment = paymentStats.find((p) => p.paymentStatus === "pending");
+
+    return {
+      totalDealers,
+      totalProducts,
+      totalCompanyStock: Number(stockRows[0]?.get("total") || 0),
+      lowStockProducts,
+      pendingOrders: orderMap.pending || 0,
+      approvedOrders: orderMap.approved || 0,
+      deliveredOrders: orderMap.delivered || 0,
+      rejectedOrders: orderMap.rejected || 0,
+      pendingPayments: Number(pendingPayment?.count || 0),
+      totalRevenue: Number(paidPayment?.total || 0),
+      totalPendingAmount: Number(pendingPayment?.total || 0)
+    };
+  });
 };
 
 exports.company = asyncHandler(async (req, res) => {
@@ -588,6 +615,7 @@ exports.deleteDealer = asyncHandler(async (req, res) => {
 
 exports.createProduct = asyncHandler(async (req, res) => {
   const image = publicPath("products", req.file);
+  const imagePublicId = req.file?.cloudinaryPublicId || null;
   const variants = JSON.parse(req.body.variants || "[]").filter((row) => row.variantName || row.colorName);
   const creditCoins = Math.max(0, Number(req.body.creditCoins || 0));
   if (variants.some((row) => Number(row.stockQuantity || 0) < 0)) return res.status(400).json({ message: "Stock quantity cannot be negative" });
@@ -606,6 +634,7 @@ exports.createProduct = asyncHandler(async (req, res) => {
       creditCoins,
       variantEnabled: req.body.variantEnabled !== "false",
       image: image || req.body.image,
+      imagePublicId,
       companyId: req.user.companyId
     }, { transaction });
     const variantRows = normalizeVariantRows(variants, req.body.quantity);
@@ -642,6 +671,10 @@ exports.updateProduct = asyncHandler(async (req, res) => {
   if (!product) return res.status(404).json({ message: "Product not found" });
   const variants = req.body.variants ? JSON.parse(req.body.variants || "[]") : null;
   if (variants?.some((row) => Number(row.stockQuantity || 0) < 0)) return res.status(400).json({ message: "Stock quantity cannot be negative" });
+
+  const newImage = publicPath("products", req.file);
+  const oldImagePublicId = product.imagePublicId || cloudinaryService.extractPublicId(product.image);
+
   await Product.sequelize.transaction(async (transaction) => {
     await product.update({
       productName: req.body.productName ?? product.productName,
@@ -652,7 +685,8 @@ exports.updateProduct = asyncHandler(async (req, res) => {
       expiryDate: Object.prototype.hasOwnProperty.call(req.body, "expiryDate") ? (req.body.expiryDate || null) : product.expiryDate,
       price: req.body.price ?? product.price,
       creditCoins: Math.max(0, Number(req.body.creditCoins ?? product.creditCoins ?? 0)),
-      image: publicPath("products", req.file) || req.body.image || product.image,
+      image: newImage || req.body.image || product.image,
+      imagePublicId: req.file?.cloudinaryPublicId || (req.body.image ? null : product.imagePublicId),
       status: req.body.status ?? product.status
     }, { transaction });
     if (variants) {
@@ -702,6 +736,12 @@ exports.updateProduct = asyncHandler(async (req, res) => {
       await CompanyInventory.update({ quantity: Number(total || 0), lastUpdatedBy: req.user.id }, { where: { companyId: req.user.companyId, productId: product.id }, transaction });
     }
   });
+
+  // Delete old asset in Cloudinary only after new image upload and update succeeded
+  if (newImage && oldImagePublicId) {
+    cloudinaryService.deleteAsset(oldImagePublicId).catch(() => {});
+  }
+
   res.json(await Product.findByPk(product.id, { include: [{ model: CompanyInventory }, { model: ProductVariant, as: "variants" }] }));
 });
 
@@ -713,9 +753,13 @@ exports.deleteProduct = asyncHandler(async (req, res) => {
     await product.update({ status: "inactive" });
     return res.json({ message: "Product has orders, so it was deactivated.", product });
   }
+  const oldPublicId = product.imagePublicId || cloudinaryService.extractPublicId(product.image);
   await ProductVariant.destroy({ where: { companyId: req.user.companyId, productId: product.id } });
   await CompanyInventory.destroy({ where: { companyId: req.user.companyId, productId: product.id } });
   await product.destroy();
+  if (oldPublicId) {
+    cloudinaryService.deleteAsset(oldPublicId).catch(() => {});
+  }
   res.json({ message: "Product deleted" });
 });
 
@@ -855,12 +899,25 @@ exports.stockCheck = asyncHandler(async (req, res) => {
 });
 
 exports.approveWithSchedule = asyncHandler(async (req, res) => {
-  const required = ["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"];
-  const missing = required.filter((field) => !req.body[field]);
-  if (missing.length) return res.status(400).json({ message: `Missing delivery dates: ${missing.join(", ")}` });
+  const orderId = req.params.id || req.params.orderId;
+  const order = await Order.findOne({ where: { id: orderId, ...companyScope(req) }, include: [{ model: OrderItem, as: "items" }] });
+  if (!order) return res.status(404).json({ message: "Order not found" });
 
-  const order = await Order.findOne({ where: { id: req.params.id, ...companyScope(req), status: "pending" }, include: [{ model: OrderItem, as: "items" }] });
-  if (!order) return res.status(404).json({ message: "Pending order not found" });
+  if (order.status !== "pending") {
+    return res.json(await Order.findByPk(order.id, {
+      include: [
+        { model: OrderItem, as: "items", include: [Product, ProductVariant] },
+        { model: DeliveryTracking, as: "tracking" },
+        { model: OrderScheduledMessage, as: "scheduledMessages" }
+      ]
+    }));
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const packingDate = req.body.packingDate || todayStr;
+  const shippingDate = req.body.shippingDate || new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const outForDeliveryDate = req.body.outForDeliveryDate || new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  const deliveredDate = req.body.deliveredDate || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
 
   const orderWithProducts = await Order.findByPk(order.id, { include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] });
   const stockCheck = await stockCheckForOrder(orderWithProducts);
@@ -886,10 +943,10 @@ exports.approveWithSchedule = asyncHandler(async (req, res) => {
 
   await order.update({
     status: "approved",
-    packingDate: req.body.packingDate,
-    shippingDate: req.body.shippingDate,
-    outForDeliveryDate: req.body.outForDeliveryDate,
-    deliveredDate: req.body.deliveredDate,
+    packingDate,
+    shippingDate,
+    outForDeliveryDate,
+    deliveredDate,
     approvedAt: new Date(),
     approvedBy: req.user.id,
     currentDeliveryStep: "approved",
@@ -898,19 +955,19 @@ exports.approveWithSchedule = asyncHandler(async (req, res) => {
 
   await DeliveryTracking.bulkCreate([
     { orderId: order.id, status: "approved", message: "Order Approved", updatedBy: req.user.id },
-    { orderId: order.id, status: "packing", message: `Packing Started - ${req.body.packingDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "shipping", message: `Shipping Started - ${req.body.shippingDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "out_for_delivery", message: `Out For Delivery - ${req.body.outForDeliveryDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "delivered", message: `Delivered - ${req.body.deliveredDate}`, updatedBy: req.user.id }
+    { orderId: order.id, status: "packing", message: `Packing Started - ${packingDate}`, updatedBy: req.user.id },
+    { orderId: order.id, status: "shipping", message: `Shipping Started - ${shippingDate}`, updatedBy: req.user.id },
+    { orderId: order.id, status: "out_for_delivery", message: `Out For Delivery - ${outForDeliveryDate}`, updatedBy: req.user.id },
+    { orderId: order.id, status: "delivered", message: `Delivered - ${deliveredDate}`, updatedBy: req.user.id }
   ]);
 
-  const approvalText = `Your order #${order.orderNumber} has been approved. Your expected delivery date is ${req.body.deliveredDate}.`;
+  const approvalText = `Your order #${order.orderNumber} has been approved. Your expected delivery date is ${deliveredDate}.`;
   const scheduleRows = [
     { messageType: "approval", scheduledDate: new Date().toISOString().slice(0, 10), messageText: approvalText, isSent: true, sentAt: new Date() },
-    { messageType: "packing", scheduledDate: req.body.packingDate, messageText: `Your order #${order.orderNumber} packing has started today.` },
-    { messageType: "shipping", scheduledDate: req.body.shippingDate, messageText: `Your order #${order.orderNumber} has been shipped today.` },
-    { messageType: "out_for_delivery", scheduledDate: req.body.outForDeliveryDate, messageText: `Your order #${order.orderNumber} is out for delivery today.` },
-    { messageType: "delivered", scheduledDate: req.body.deliveredDate, messageText: `Your order #${order.orderNumber} is scheduled to be delivered today.` }
+    { messageType: "packing", scheduledDate: packingDate, messageText: `Your order #${order.orderNumber} packing has started today.` },
+    { messageType: "shipping", scheduledDate: shippingDate, messageText: `Your order #${order.orderNumber} has been shipped today.` },
+    { messageType: "out_for_delivery", scheduledDate: outForDeliveryDate, messageText: `Your order #${order.orderNumber} is out for delivery today.` },
+    { messageType: "delivered", scheduledDate: deliveredDate, messageText: `Your order #${order.orderNumber} is scheduled to be delivered today.` }
   ].map((row) => ({
     orderId: order.id,
     dealerId: order.dealerId,
@@ -1034,6 +1091,7 @@ exports.sendPaymentRequest = asyncHandler(async (req, res) => {
     paymentMethod: null,
     paymentStatus: "pending",
     invoiceFile: publicPath("invoices", req.file),
+    invoicePublicId: req.file?.cloudinaryPublicId || null,
     paymentRequestSentAt: new Date(),
     approvedBy: req.user.id
   });
@@ -1260,21 +1318,32 @@ exports.sendPaymentReminder = asyncHandler(async (req, res) => {
 exports.creditSummary = asyncHandler(async (req, res) => {
   const companyId = req.user.companyId;
   const [rewards, redemptions, redeemedCoins, wallets] = await Promise.all([
-    CreditReward.findAll({ where: { companyId } }),
+    CreditReward.findAll({ where: { companyId }, order: [["createdAt", "DESC"]] }),
     CreditRedemption.findAll({ where: { companyId }, include: [{ model: CreditReward, as: "reward" }, Dealer], order: [["createdAt", "DESC"]] }),
     DealerCreditTransaction.sum("coins", { where: { companyId, type: "REDEEM" } }),
     DealerCreditWallet.findAll({ where: { companyId }, include: [Dealer], order: [["balance", "DESC"]] })
   ]);
-  res.json({
+  const extraStats = await creditStatsForCompany(companyId);
+  const stats = {
     totalRewards: rewards.length,
     activeRewards: rewards.filter((r) => r.status === "active").length,
     totalRedemptions: redemptions.length,
     pendingRedemptions: redemptions.filter((r) => r.status === "PENDING").length,
     completedRedemptions: redemptions.filter((r) => r.status === "PROVIDED").length,
+    providedRewards: redemptions.filter((r) => r.status === "PROVIDED").length,
     totalCoinsRedeemed: Number(redeemedCoins || 0),
+    totalCoinsIssued: extraStats.totalCreditCoinsIssued || 0,
+    outstandingBalance: wallets.reduce((sum, wallet) => sum + Number(wallet.balance || 0), 0),
     topDealerByCredits: wallets[0] ? { dealerName: wallets[0].Dealer?.dealerName, balance: wallets[0].balance } : null,
     remainingRewardStock: rewards.reduce((sum, reward) => sum + Number(reward.quantity || 0), 0),
-    ...(await creditStatsForCompany(companyId))
+    ...extraStats
+  };
+  res.json({
+    ...stats,
+    stats,
+    wallets,
+    rewards,
+    redemptions
   });
 });
 
@@ -1284,7 +1353,9 @@ exports.creditRewards = asyncHandler(async (req, res) => {
     const requiredCoins = Number(req.body.requiredCoins);
     const quantity = Number(req.body.quantity);
     if (requiredCoins < 0 || quantity < 0) return res.status(400).json({ message: "Coins and quantity cannot be negative" });
-    const reward = await CreditReward.create({ ...req.body, requiredCoins, quantity, companyId, image: publicPath("credit-rewards", req.file) || req.body.image });
+    const image = publicPath("rewards", req.file);
+    const imagePublicId = req.file?.cloudinaryPublicId || null;
+    const reward = await CreditReward.create({ ...req.body, requiredCoins, quantity, companyId, image: image || req.body.image, imagePublicId });
     return res.status(201).json(reward);
   }
   res.json(await CreditReward.findAll({ where: { companyId }, order: [["createdAt", "DESC"]] }));
@@ -1293,14 +1364,27 @@ exports.creditRewards = asyncHandler(async (req, res) => {
 exports.updateCreditReward = asyncHandler(async (req, res) => {
   const reward = await CreditReward.findOne({ where: { id: req.params.id, companyId: req.user.companyId } });
   if (!reward) return res.status(404).json({ message: "Reward not found" });
-  await reward.update({ ...req.body, image: publicPath("credit-rewards", req.file) || req.body.image || reward.image });
+  const newImage = publicPath("rewards", req.file);
+  const oldPublicId = reward.imagePublicId || cloudinaryService.extractPublicId(reward.image);
+  await reward.update({
+    ...req.body,
+    image: newImage || req.body.image || reward.image,
+    imagePublicId: req.file?.cloudinaryPublicId || (req.body.image ? null : reward.imagePublicId)
+  });
+  if (newImage && oldPublicId) {
+    cloudinaryService.deleteAsset(oldPublicId).catch(() => {});
+  }
   res.json(reward);
 });
 
 exports.deleteCreditReward = asyncHandler(async (req, res) => {
   const reward = await CreditReward.findOne({ where: { id: req.params.id, companyId: req.user.companyId } });
   if (!reward) return res.status(404).json({ message: "Reward not found" });
+  const oldPublicId = reward.imagePublicId || cloudinaryService.extractPublicId(reward.image);
   await reward.destroy();
+  if (oldPublicId) {
+    cloudinaryService.deleteAsset(oldPublicId).catch(() => {});
+  }
   res.json({ message: "Reward deleted" });
 });
 
@@ -1318,7 +1402,9 @@ exports.creditRedemptions = asyncHandler(async (req, res) => {
 exports.updateCreditRedemptionStatus = asyncHandler(async (req, res) => {
   const redemption = await CreditRedemption.findOne({ where: { id: req.params.id, companyId: req.user.companyId }, include: [{ model: CreditReward, as: "reward" }, Dealer] });
   if (!redemption) return res.status(404).json({ message: "Redemption not found" });
-  const update = { status: req.body.status || redemption.status, expectedProvideDate: req.body.expectedProvideDate || redemption.expectedProvideDate, adminNote: req.body.adminNote ?? redemption.adminNote };
+  let newStatus = req.body.status || redemption.status;
+  if (newStatus === "REJECTED") newStatus = "CANCELLED";
+  const update = { status: newStatus, expectedProvideDate: req.body.expectedProvideDate || redemption.expectedProvideDate, adminNote: req.body.adminNote ?? redemption.adminNote };
   if (update.status === "APPROVED" && !redemption.approvedAt) update.approvedAt = new Date();
   if (update.status === "PROVIDED" && !redemption.providedAt) update.providedAt = new Date();
   await redemption.update(update);

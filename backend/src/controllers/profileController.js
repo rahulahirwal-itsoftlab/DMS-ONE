@@ -1,6 +1,8 @@
 const asyncHandler = require("../utils/asyncHandler");
 const { User, Company, Dealer } = require("../models");
 const { sendPasswordChangeOtpEmail } = require("../utils/mailService");
+const { publicPath } = require("../middleware/upload");
+const cloudinaryService = require("../services/cloudinaryService");
 
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -11,7 +13,10 @@ function cleanUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    phone: user.phone,
     role: user.role,
+    avatar: user.avatar,
+    avatarPublicId: user.avatarPublicId,
     status: user.status,
     companyId: user.companyId,
     dealerId: user.dealerId,
@@ -46,6 +51,23 @@ exports.updateMe = asyncHandler(async (req, res) => {
     if (!trimmed) return res.status(400).json({ message: "Name is required" });
     user.name = trimmed;
   }
+
+  if (phone !== undefined) {
+    user.phone = String(phone || "").trim() || null;
+  }
+
+  if (req.file) {
+    const avatar = publicPath("profiles", req.file);
+    const oldAvatarPublicId = user.avatarPublicId || cloudinaryService.extractPublicId(user.avatar);
+    if (avatar) {
+      user.avatar = avatar;
+      user.avatarPublicId = req.file?.cloudinaryPublicId || null;
+      if (oldAvatarPublicId) {
+        cloudinaryService.deleteAsset(oldAvatarPublicId).catch(() => {});
+      }
+    }
+  }
+
   await user.save();
 
   if (user.dealerId && (phone !== undefined || ownerName !== undefined)) {

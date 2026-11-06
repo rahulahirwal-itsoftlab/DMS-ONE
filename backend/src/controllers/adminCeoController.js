@@ -248,21 +248,24 @@ exports.financeOverview = asyncHandler(async (req, res) => {
 });
 
 exports.creditOverview = asyncHandler(async (req, res) => {
-  const companyId = req.user.companyId;
+  const companyId = req.user.companyId || (req.user.role === "SUPER_ADMIN" ? 1 : req.user.companyId);
+  const where = companyId ? { companyId } : {};
   const [wallets, rewards, redemptions] = await Promise.all([
-    DealerCreditWallet.findAll({ where: { companyId }, include: [Dealer], order: [["balance", "DESC"]] }),
-    CreditReward.findAll({ where: { companyId }, order: [["createdAt", "DESC"]] }),
-    CreditRedemption.findAll({ where: { companyId }, include: [{ model: CreditReward, as: "reward" }, Dealer], order: [["createdAt", "DESC"]] })
+    DealerCreditWallet.findAll({ where, include: [Dealer], order: [["balance", "DESC"]] }),
+    CreditReward.findAll({ where, order: [["createdAt", "DESC"]] }),
+    CreditRedemption.findAll({ where, include: [{ model: CreditReward, as: "reward" }, Dealer], order: [["createdAt", "DESC"]] })
   ]);
+  const stats = {
+    totalCoinsIssued: wallets.reduce((sum, wallet) => sum + Number(wallet.totalEarned || 0), 0),
+    totalCoinsRedeemed: wallets.reduce((sum, wallet) => sum + Number(wallet.totalRedeemed || 0), 0),
+    outstandingBalance: wallets.reduce((sum, wallet) => sum + Number(wallet.balance || 0), 0),
+    totalRewards: rewards.length,
+    pendingRedemptions: redemptions.filter((row) => row.status === "PENDING").length,
+    providedRewards: redemptions.filter((row) => ["PROVIDED", "APPROVED"].includes(row.status)).length
+  };
   res.json({
-    stats: {
-      totalCoinsIssued: wallets.reduce((sum, wallet) => sum + Number(wallet.totalEarned || 0), 0),
-      totalCoinsRedeemed: wallets.reduce((sum, wallet) => sum + Number(wallet.totalRedeemed || 0), 0),
-      outstandingBalance: wallets.reduce((sum, wallet) => sum + Number(wallet.balance || 0), 0),
-      totalRewards: rewards.length,
-      pendingRedemptions: redemptions.filter((row) => row.status === "PENDING").length,
-      providedRewards: redemptions.filter((row) => row.status === "PROVIDED").length
-    },
+    stats,
+    ...stats,
     wallets,
     rewards,
     redemptions
@@ -470,7 +473,7 @@ exports.sendChat = asyncHandler(async (req, res) => {
   };
   
   if (req.file) {
-    payload.attachmentUrl = publicPath("chat-attachments", req.file);
+    payload.attachmentUrl = publicPath("chat", req.file);
     payload.attachmentName = req.file.originalname;
   }
   

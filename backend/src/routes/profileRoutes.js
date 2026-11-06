@@ -1,10 +1,11 @@
 const router = require("express").Router();
 const ctrl = require("../controllers/profileController");
 const { protect } = require("../middleware/auth");
+const { profileAvatarUpload } = require("../middleware/upload");
 
 router.use(protect);
 router.get("/me", ctrl.me);
-router.put("/me", ctrl.updateMe);
+router.put("/me", profileAvatarUpload.single("avatar"), ctrl.updateMe);
 router.post("/send-password-otp", ctrl.sendPasswordOtp);
 router.post("/change-password-with-otp", ctrl.changePasswordWithOtp);
 router.post("/change-password-after-otp-login", ctrl.changePasswordAfterOtpLogin);

@@ -9,10 +9,12 @@
     "seed": "node src/seeders/seed.js",
     "seed:super-admin": "node src/seeders/ensureSuperAdmin.js",
     "fix:superadmin": "node scripts/fixSuperAdmin.js",
-    "test:mail": "node scripts/testMail.js"
+    "test:mail": "node scripts/testMail.js",
+    "migrate:cloudinary": "node scripts/migrateLocalImagesToCloudinary.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

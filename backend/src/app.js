@@ -4,10 +4,11 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
 const { superAdminManagerRolesEnabled } = require("./utils/featureFlags");
+const { sequelize } = require("./models");
 
 const app = express();
 
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
@@ -21,9 +22,15 @@ const allowedOrigins = [
   "https://dms-fb.vercel.app/"
 ];
 
+const envOrigins = process.env.CORS_ALLOWED_ORIGINS
+  ? process.env.CORS_ALLOWED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+  : [];
+
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envOrigins])];
+
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
@@ -34,14 +41,75 @@ const corsOptions = {
   allowedHeaders: ["Content-Type", "Authorization"]
 };
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+// Security headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false // Allows inline previews and external Cloudinary images
+}));
+
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "2mb" }));
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 600 }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 
-app.get("/api/health", (req, res) => res.json({ status: "ok", service: "DMS API" }));
+// Request timeout middleware (30s)
+app.use((req, res, next) => {
+  req.setTimeout(30000, () => {
+    if (!res.headersSent) {
+      res.status(504).json({ message: "Gateway timeout: request took too long to complete" });
+    }
+  });
+  next();
+});
+
+// Legacy uploads static serve (with max-age caching header for performance)
+app.use("/uploads", express.static(path.join(__dirname, "../uploads"), {
+  maxAge: "7d",
+  etag: true
+}));
+
+// Rate limiters
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests from this IP, please try again later." }
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts, please try again in 15 minutes." }
+});
+
+app.use("/api", apiLimiter);
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+
+// Comprehensive production health check
+app.get("/api/health", async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({
+      status: "healthy",
+      service: "DMS Enterprise API",
+      database: "connected",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "degraded",
+      service: "DMS Enterprise API",
+      database: "disconnected",
+      error: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/super-admin", require("./routes/superAdminRoutes"));
 if (superAdminManagerRolesEnabled()) {
@@ -67,9 +135,22 @@ app.use("/api/internal-updates", require("./routes/internalUpdatesRoutes"));
 app.use("/api", require("./routes/compatRoutes"));
 
 app.use((req, res) => res.status(404).json({ message: "Route not found" }));
+
+// Centralized error handler
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ message: err.message || "Server error", ...(err.code ? { code: err.code } : {}), ...(err.licenseStatus ? { licenseStatus: err.licenseStatus } : {}) });
+  if (process.env.NODE_ENV !== "production") {
+    console.error(`[API Error] ${req.method} ${req.url}:`, err);
+  }
+  const status = err.status || 500;
+  const message = status === 500 && process.env.NODE_ENV === "production"
+    ? "Internal server error"
+    : (err.message || "Server error");
+
+  res.status(status).json({
+    message,
+    ...(err.code ? { code: err.code } : {}),
+    ...(err.licenseStatus ? { licenseStatus: err.licenseStatus } : {})
+  });
 });
 
 module.exports = app;

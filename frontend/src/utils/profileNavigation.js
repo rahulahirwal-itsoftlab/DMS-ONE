@@ -42,7 +42,7 @@ export const roleTabs = {
     { id: "creditManagement", label: "Credit Management", icon: "credits" },
     { id: "dealerSales", label: "Dealer Sales", icon: "reports" },
     { id: "messages", label: "Messages", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "policies", label: "Policies", icon: "policies" },
     { id: "reports", label: "Reports", icon: "reports" }
   ],
@@ -58,7 +58,7 @@ export const roleTabs = {
     { id: "creditOverview", label: "Credit Monitoring", icon: "credits" },
     ...adminCeoTransferTabs,
     { id: "adminChat", label: "Internal Team Chat", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" }
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" }
   ],
   DEALER_MANAGER: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -66,7 +66,7 @@ export const roleTabs = {
     { id: "dealerPerformance", label: "Dealer Performance", icon: "performance" },
     { id: "creditManagement", label: "Credit Store / Coins", icon: "credits" },
     { id: "adminChat", label: "Internal Team Chat", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" }
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" }
   ],
   PRODUCT_DELIVERY_MANAGER: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -76,14 +76,14 @@ export const roleTabs = {
     { id: "delivery", label: "Delivery", icon: "delivery" },
     ...adminInterDealerTab,
     { id: "adminChat", label: "Internal Team Chat", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" }
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" }
   ],
   FINANCE_MANAGER: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "finance", label: "Finance", icon: "finance" },
     { id: "creditManagement", label: "Credit Overview", icon: "credits" },
     { id: "adminChat", label: "Internal Team Chat", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" }
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" }
   ],
   DEALER: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
@@ -96,7 +96,7 @@ export const roleTabs = {
     { id: "finance", label: "Finance", icon: "finance" },
     { id: "creditStore", label: "Credit Store", icon: "credits" },
     { id: "messages", label: "Message to Admin", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "policies", label: "Policies", icon: "policies" },
     { id: "reports", label: "Send Report", icon: "reports" }
   ],
@@ -111,7 +111,7 @@ export const roleTabs = {
     { id: "finance", label: "Finance", icon: "finance" },
     { id: "creditStore", label: "Credit Store", icon: "credits" },
     { id: "messages", label: "Message to Admin", icon: "messages" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "policies", label: "Policies", icon: "policies" },
     { id: "reports", label: "Send Report", icon: "reports" }
   ],
@@ -121,7 +121,7 @@ export const roleTabs = {
     { id: "inventory", label: "My Inventory", icon: "products" },
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "reports", label: "Send Report", icon: "reports" }
   ],
   DEALER_STOCK_DELIVERY_MANAGER: [
@@ -131,14 +131,14 @@ export const roleTabs = {
     ...(dealerStockExchangeEnabled ? dealerStockExchangeTab : []),
     { id: "orders", label: "My Orders", icon: "orders" },
     { id: "delivery", label: "Delivery", icon: "delivery" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "reports", label: "Send Report", icon: "reports" }
   ],
   DEALER_SALES_FINANCE_MANAGER: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "sales", label: "Sales", icon: "reports" },
     { id: "finance", label: "Finance", icon: "finance" },
-    { id: "internalUpdates", label: "Internal Updates", icon: "internalUpdates" },
+    { id: "internalUpdates", label: "Notifications", icon: "internalUpdates" },
     { id: "reports", label: "Send Report", icon: "reports" }
   ]
 };

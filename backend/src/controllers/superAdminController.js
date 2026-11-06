@@ -9,9 +9,12 @@ const {
   InternalNotification, OrderScheduledMessage
 } = require("../models");
 const { licenseCapacity } = require("../utils/licenseService");
+const { publicPath } = require("../middleware/upload");
+const cloudinaryService = require("../services/cloudinaryService");
+const cacheService = require("../services/cacheService");
 
 const adminRoles = ["ADMIN_CEO", "ADMIN"];
-const editableCompanyFields = ["orgId", "companyName", "category", "description", "phone", "address", "city", "state", "pincode", "numberOfLicenses", "startDate", "endDate", "status"];
+const editableCompanyFields = ["orgId", "companyName", "category", "description", "phone", "address", "city", "state", "pincode", "numberOfLicenses", "startDate", "endDate", "status", "logo", "logoPublicId"];
 const activeStatuses = ["active"];
 const dependencyModels = [
   Dealer, Product, CompanyInventory, ProductVariant, DealerInventory, DealerSale,
@@ -82,37 +85,58 @@ async function serializeOrganizations(companies) {
 }
 
 exports.dashboard = asyncHandler(async (req, res) => {
-  const visible = { status: { [Op.ne]: "deleted" } };
-  const [companies, totalDealers, categoryRows, dealerRows] = await Promise.all([
-    Company.findAll({ where: visible, order: [["createdAt", "DESC"]] }),
-    Dealer.count(),
-    Company.findAll({ where: visible, attributes: ["category", [fn("COUNT", col("id")), "count"]], group: ["category"] }),
-    Dealer.findAll({ attributes: ["companyId", [fn("COUNT", col("id")), "count"]], group: ["companyId"] })
-  ]);
-  const organizationsByMonthMap = companies.reduce((acc, company) => {
-    const createdAt = company.createdAt ? new Date(company.createdAt) : null;
-    const month = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toISOString().slice(0, 7) : "Unknown";
-    acc[month] = (acc[month] || 0) + 1;
-    return acc;
-  }, {});
-  const totalAdminCeos = await User.count({ where: { role: { [Op.in]: adminRoles }, companyId: { [Op.in]: companies.map((company) => company.id) } } });
-  const organizations = await serializeOrganizations(companies);
-  const dealerMap = Object.fromEntries(dealerRows.map((row) => [row.companyId, Number(row.get("count") || 0)]));
-  res.json({
-    totalOrganizations: companies.length,
-    activeOrganizations: companies.filter((company) => activeStatuses.includes(company.status)).length,
-    inactiveOrganizations: companies.filter((company) => !activeStatuses.includes(company.status)).length,
-    totalAdminCeos,
-    totalDealers,
-    organizationsByMonth: Object.entries(organizationsByMonthMap).sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count })),
-    statusDistribution: [
-      { status: "Active", count: companies.filter((company) => activeStatuses.includes(company.status)).length },
-      { status: "Inactive", count: companies.filter((company) => !activeStatuses.includes(company.status)).length }
-    ],
-    categoryDistribution: categoryRows.map((row) => ({ category: row.category || "Uncategorized", count: Number(row.get("count") || 0) })),
-    dealersByOrganization: companies.map((company) => ({ organization: company.companyName, count: dealerMap[company.id] || 0 })),
-    recentOrganizations: organizations.slice(0, 8)
+  const cacheKey = cacheService.key("global", "superadmin", "dashboard");
+  const data = await cacheService.getOrSet(cacheKey, 20, async () => {
+    const visible = { status: { [Op.ne]: "deleted" } };
+    const [companies, totalDealers, categoryRows, dealerRows] = await Promise.all([
+      Company.findAll({
+        where: visible,
+        attributes: ["id", "companyName", "status", "category", "createdAt"],
+        order: [["createdAt", "DESC"]]
+      }),
+      Dealer.count(),
+      Company.findAll({ where: visible, attributes: ["category", [fn("COUNT", col("id")), "count"]], group: ["category"] }),
+      Dealer.findAll({ attributes: ["companyId", [fn("COUNT", col("id")), "count"]], group: ["companyId"] })
+    ]);
+
+    const organizationsByMonthMap = companies.reduce((acc, company) => {
+      const createdAt = company.createdAt ? new Date(company.createdAt) : null;
+      const month = createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toISOString().slice(0, 7) : "Unknown";
+      acc[month] = (acc[month] || 0) + 1;
+      return acc;
+    }, {});
+
+    const companyIds = companies.map((c) => c.id);
+    const totalAdminCeos = companyIds.length
+      ? await User.count({ where: { role: { [Op.in]: adminRoles }, companyId: { [Op.in]: companyIds } } })
+      : 0;
+
+    // Fetch full records only for the 8 most recent organizations
+    const recentCompanies = await Company.findAll({
+      where: visible,
+      order: [["createdAt", "DESC"]],
+      limit: 8
+    });
+    const recentOrganizations = await serializeOrganizations(recentCompanies);
+    const dealerMap = Object.fromEntries(dealerRows.map((row) => [row.companyId, Number(row.get("count") || 0)]));
+
+    return {
+      totalOrganizations: companies.length,
+      activeOrganizations: companies.filter((company) => activeStatuses.includes(company.status)).length,
+      inactiveOrganizations: companies.filter((company) => !activeStatuses.includes(company.status)).length,
+      totalAdminCeos,
+      totalDealers,
+      organizationsByMonth: Object.entries(organizationsByMonthMap).sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count })),
+      statusDistribution: [
+        { status: "Active", count: companies.filter((company) => activeStatuses.includes(company.status)).length },
+        { status: "Inactive", count: companies.filter((company) => !activeStatuses.includes(company.status)).length }
+      ],
+      categoryDistribution: categoryRows.map((row) => ({ category: row.category || "Uncategorized", count: Number(row.get("count") || 0) })),
+      dealersByOrganization: companies.map((company) => ({ organization: company.companyName, count: dealerMap[company.id] || 0 })),
+      recentOrganizations
+    };
   });
+  res.json(data);
 });
 
 exports.createOrganization = asyncHandler(async (req, res) => {
@@ -134,6 +158,11 @@ exports.createOrganization = asyncHandler(async (req, res) => {
     companyValues.orgId = orgId;
     companyValues.numberOfLicenses = Number(body.numberOfLicenses);
     companyValues.status = normalizeStatus(companyValues.status);
+    const logo = publicPath("organizations", req.file);
+    if (logo) {
+      companyValues.logo = logo;
+      companyValues.logoPublicId = req.file?.cloudinaryPublicId || null;
+    }
     Object.assign(companyValues, { adminName: body.adminName.trim(), adminEmail: email, adminPhone: body.adminPhone.trim() });
     const company = await Company.create(companyValues, { transaction });
     const admin = await User.create({
@@ -178,6 +207,12 @@ exports.updateOrganization = asyncHandler(async (req, res) => {
   }
   if (validationError) return res.status(400).json({ message: validationError });
   const updates = pick(req.body, editableCompanyFields);
+  const newLogo = publicPath("organizations", req.file);
+  const oldLogoPublicId = company.logoPublicId || cloudinaryService.extractPublicId(company.logo);
+  if (newLogo) {
+    updates.logo = newLogo;
+    updates.logoPublicId = req.file?.cloudinaryPublicId || null;
+  }
   if (Object.prototype.hasOwnProperty.call(updates, "orgId")) {
     updates.orgId = String(updates.orgId || "").trim();
     if (!updates.orgId) return res.status(400).json({ message: "Organization ID is required" });
@@ -207,6 +242,9 @@ exports.updateOrganization = asyncHandler(async (req, res) => {
     await company.update(updates, { transaction });
     if (admin && Object.keys(adminUpdates).length) await admin.update(adminUpdates, { transaction });
   });
+  if (newLogo && oldLogoPublicId) {
+    cloudinaryService.deleteAsset(oldLogoPublicId).catch(() => {});
+  }
   const [organization] = await serializeOrganizations([await Company.findByPk(company.id)]);
   res.json(organization);
 });

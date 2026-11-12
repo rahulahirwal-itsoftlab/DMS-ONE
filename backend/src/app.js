@@ -20,7 +20,8 @@ const defaultAllowedOrigins = [
   "https://dms-one.netlify.app",
   "https://dms.itsoftlab360.com",
   "http://dms-frontend-lb-179175988.ap-south-1.elb.amazonaws.com",
-  "https://dms-fb.vercel.app/"
+  "https://dms-fb.vercel.app/",
+  "https://dms-fb.vercel.app"
 ];
 
 const envOrigins = process.env.CORS_ALLOWED_ORIGINS

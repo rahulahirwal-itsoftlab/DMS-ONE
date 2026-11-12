@@ -37,6 +37,7 @@ const corsOptions = {
     } else {
       callback(new Error("Not allowed by CORS"));
     }
+    // hello this changes for the DMS-ONE
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

@@ -7,6 +7,7 @@ const { superAdminManagerRolesEnabled } = require("./utils/featureFlags");
 const { sequelize } = require("./models");
 
 const app = express();
+app.set('trust proxy', 1);
 
 const defaultAllowedOrigins = [
   "http://localhost:5173",

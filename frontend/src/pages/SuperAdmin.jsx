@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, RadialBar, RadialBarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowUpRight, Building2, CalendarDays, CheckCircle2, Edit3, Eye, KeyRound, Mail, MapPin, MoreHorizontal, Phone, Plus, Power, Search, Trash2, UserRound, Users, X } from "lucide-react";
+import { ArrowUpRight, Building2, CalendarDays, CheckCircle2, Edit3, Eye, KeyRound, Mail, MapPin, Phone, Plus, Power, Search, Trash2, UserRound, Users, X } from "lucide-react";
 import Layout from "../components/Layout";
 import { api } from "../api/client";
 import { Button, ChartCard, ConfirmModal, DashboardCard, DataTable, FormGrid, formatDate, Loading, PageHeader, SearchFilterBar, SectionCard, Select, StatusBadge, TextField } from "../components/UI";
@@ -40,6 +40,7 @@ export default function SuperAdmin() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [recentlyCreated, setRecentlyCreated] = useState(null);
 
   const selectTab = (tab) => navigate(`/super-admin/${tab}`);
   const load = async () => {
@@ -63,9 +64,13 @@ export default function SuperAdmin() {
   const submit = async (event) => {
     event.preventDefault(); setSaving(true); setError(""); setMessage("");
     try {
-      await api.post("/super-admin/organizations", form);
-      setForm(createBlankForm()); setMessage("Organization and Admin CEO created successfully");
-      await load(); selectTab("organizations");
+      const res = await api.post("/super-admin/organizations", form);
+      const createdOrg = res.data;
+      setRecentlyCreated(createdOrg);
+      setForm(createBlankForm());
+      setMessage(`Organization "${createdOrg?.companyName || form.companyName}" and Admin CEO created successfully!`);
+      await load();
+      selectTab("organizations");
     } catch (err) { setError(err.response?.data?.message || "Unable to create organization"); }
     finally { setSaving(false); }
   };
@@ -74,7 +79,9 @@ export default function SuperAdmin() {
     event.preventDefault(); setSaving(true); setError("");
     try {
       await api.put(`/super-admin/organizations/${editing.id}`, editing);
-      setEditing(null); setMessage("Organization updated successfully"); await load();
+      setEditing(null);
+      setMessage("Organization updated successfully");
+      await load();
     } catch (err) { setError(err.response?.data?.message || "Unable to update organization"); }
     finally { setSaving(false); }
   };
@@ -95,9 +102,23 @@ export default function SuperAdmin() {
       {message && <Notice tone="success">{message}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       {loading ? <Loading /> : <>
-        {activeTab === "dashboard" && <Dashboard dashboard={dashboard} onCreate={() => selectTab("create-organization")} />}
+        {activeTab === "dashboard" && <Dashboard dashboard={dashboard} onCreate={() => selectTab("create-organization")} onEdit={setEditing} />}
         {activeTab === "create-organization" && <OrganizationForm form={form} setForm={setForm} onSubmit={submit} saving={saving} />}
-        {activeTab === "organizations" && <Organizations rows={filtered} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} onView={setSelected} onEdit={setEditing} onStatus={setStatus} onDelete={setConfirmDelete} />}
+        {activeTab === "organizations" && (
+          <Organizations
+            rows={filtered}
+            search={search}
+            setSearch={setSearch}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            onView={setSelected}
+            onEdit={setEditing}
+            onStatus={setStatus}
+            onDelete={setConfirmDelete}
+            recentlyCreated={recentlyCreated}
+            onClearRecentlyCreated={() => setRecentlyCreated(null)}
+          />
+        )}
       </>}
       <DetailsModal organization={selected} onClose={() => setSelected(null)} />
       <EditModal organization={editing} setOrganization={setEditing} onSubmit={update} saving={saving} />
@@ -106,7 +127,7 @@ export default function SuperAdmin() {
   );
 }
 
-function Dashboard({ dashboard = {}, onCreate }) {
+function Dashboard({ dashboard = {}, onCreate, onEdit }) {
   const [range, setRange] = useState("6M");
   const [tableSearch, setTableSearch] = useState("");
   const monthly = dashboard.organizationsByMonth || [];
@@ -131,7 +152,7 @@ function Dashboard({ dashboard = {}, onCreate }) {
       <DarkCard label="// system_metrics" title="Organization health"><div className="grid grid-cols-[1fr_auto] items-center gap-3"><ChartBox small><RadialBarChart innerRadius="26%" outerRadius="100%" data={health} startAngle={90} endAngle={-270} barSize={9}><RadialBar dataKey="value" background={{ fill: "#EEF2F7" }} cornerRadius={10} /><Tooltip content={<DarkTooltip />} /></RadialBarChart></ChartBox><div className="space-y-4">{health.map((item) => <LegendItem key={item.name} color={item.fill} label={item.name} value={`${item.value}%`} />)}</div></div></DarkCard>
       <DarkCard className="xl:col-span-3" label="// dealer_distribution" title="Dealer count by organization"><ChartBox><BarChart data={dashboard.dealersByOrganization || []} margin={{ top: 12, right: 8, left: -22, bottom: 0 }}><DarkGrid /><XAxis dataKey="organization" tick={axisTick} axisLine={false} tickLine={false} /><YAxis allowDecimals={false} tick={axisTick} axisLine={false} tickLine={false} /><Tooltip content={<DarkTooltip />} /><Bar dataKey="count" fill="#F5B14C" radius={[7, 7, 0, 0]} maxBarSize={54} /></BarChart></ChartBox></DarkCard>
     </div>
-    <RecentOrganizations rows={recent} search={tableSearch} setSearch={setTableSearch} />
+    <RecentOrganizations rows={recent} search={tableSearch} setSearch={setTableSearch} onEdit={onEdit} />
   </div>;
 }
 
@@ -146,9 +167,9 @@ function LegendItem({ color, label, value }) { return <div className="min-w-20">
 function fillMonthlySeries(rows, size) { const map = Object.fromEntries(rows.map((row) => [row.month, row.count])); const result = []; const date = new Date(); for (let i = size - 1; i >= 0; i -= 1) { const cursor = new Date(date.getFullYear(), date.getMonth() - i, 1); const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`; result.push({ month: cursor.toLocaleString("en", { month: "short" }), count: map[key] || 0 }); } return result; }
 function buildDealerGrowth(total) { const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]; return labels.map((day, index) => ({ day, dealers: Math.max(0, total - Math.floor((6 - index) / 2)) })); }
 
-function RecentOrganizations({ rows, search, setSearch }) {
+function RecentOrganizations({ rows, search, setSearch, onEdit }) {
   return <DarkCard className="mt-6" label="// recently_created" title="Recently created organizations" action={<div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search recent organizations" placeholder="Search organizations..." className="h-9 w-56 rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-xs text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" /></div>}>
-    <div className="overflow-x-auto"><table className="w-full min-w-[980px] border-collapse text-left"><thead><tr className="border-b border-slate-200">{["Organization", "Admin CEO", "Contact", "Location", "Subscription dates", "Status", ""].map((heading) => <th key={heading} className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{heading}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id || row.companyName} className="border-b border-slate-100 text-sm transition hover:bg-indigo-50/40 motion-reduce:transition-none"><td className="px-3 py-4"><p className="font-semibold text-slate-900">{row.companyName}</p><p className="mt-1 text-xs text-slate-500">{row.category || "Uncategorized"}</p></td><td className="px-3 py-4 text-slate-700">{row.adminName || "-"}</td><td className="px-3 py-4"><p className="flex items-center gap-1.5 text-xs text-slate-600"><Mail size={12} className="text-sky-500" />{row.adminEmail || "-"}</p><p className="mt-1.5 flex items-center gap-1.5 font-mono text-xs text-slate-500"><Phone size={12} />{row.adminPhone || row.phone || "-"}</p></td><td className="px-3 py-4"><p className="flex items-center gap-1.5 text-xs text-slate-600"><MapPin size={13} className="text-amber-500" />{[row.city, row.state].filter(Boolean).join(", ") || "-"}</p></td><td className="px-3 py-4 font-mono text-xs text-slate-600"><p>{formatDate(row.startDate)}</p><p className="mt-1 text-slate-400">→ {row.endDate ? formatDate(row.endDate) : "Open-ended"}</p></td><td className="px-3 py-4"><span className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-semibold ${row.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{row.status === "active" ? "Active" : "Inactive"}</span></td><td className="px-3 py-4"><button aria-label={`Actions for ${row.companyName}`} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"><MoreHorizontal size={16} /></button></td></tr>)}</tbody></table>{rows.length === 0 && <div className="grid min-h-40 place-items-center text-center"><div><Search className="mx-auto mb-3 text-slate-300" size={28} /><p className="font-medium text-slate-600">No organizations found</p><p className="mt-1 text-xs text-slate-400">Try a different name, CEO or location.</p></div></div>}</div>
+    <div className="overflow-x-auto"><table className="w-full min-w-[980px] border-collapse text-left"><thead><tr className="border-b border-slate-200">{["Organization", "Admin CEO", "Contact", "Location", "Subscription dates", "Status", "Actions"].map((heading) => <th key={heading} className="px-3 py-3 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{heading}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id || row.companyName} className="border-b border-slate-100 text-sm transition hover:bg-indigo-50/40 motion-reduce:transition-none"><td className="px-3 py-4"><p className="font-semibold text-slate-900">{row.companyName}</p><p className="mt-1 text-xs text-slate-500">{row.category || "Uncategorized"}</p></td><td className="px-3 py-4 text-slate-700">{row.adminName || "-"}</td><td className="px-3 py-4"><p className="flex items-center gap-1.5 text-xs text-slate-600"><Mail size={12} className="text-sky-500" />{row.adminEmail || "-"}</p><p className="mt-1.5 flex items-center gap-1.5 font-mono text-xs text-slate-500"><Phone size={12} />{row.adminPhone || row.phone || "-"}</p></td><td className="px-3 py-4"><p className="flex items-center gap-1.5 text-xs text-slate-600"><MapPin size={13} className="text-amber-500" />{[row.city, row.state].filter(Boolean).join(", ") || "-"}</p></td><td className="px-3 py-4 font-mono text-xs text-slate-600"><p>{formatDate(row.startDate)}</p><p className="mt-1 text-slate-400">→ {row.endDate ? formatDate(row.endDate) : "Open-ended"}</p></td><td className="px-3 py-4"><span className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-semibold ${row.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" />{row.status === "active" ? "Active" : "Inactive"}</span></td><td className="px-3 py-4"><button type="button" title="Edit organization" aria-label={`Edit ${row.companyName}`} onClick={() => onEdit?.({ ...row })} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 focus:outline-none focus:ring-2 focus:ring-indigo-300 transition"><Edit3 size={15} /></button></td></tr>)}</tbody></table>{rows.length === 0 && <div className="grid min-h-40 place-items-center text-center"><div><Search className="mx-auto mb-3 text-slate-300" size={28} /><p className="font-medium text-slate-600">No organizations found</p><p className="mt-1 text-xs text-slate-400">Try a different name, CEO or location.</p></div></div>}</div>
   </DarkCard>;
 }
 
@@ -212,8 +233,37 @@ function FormField({ label, error, required, className, children }) {
   return <div className={className}><div className="mb-1.5 flex items-center justify-between gap-2"><label className="text-sm font-semibold text-slate-700">{label}{required && <span className="ml-1 text-rose-500">*</span>}</label>{error && <span className="text-xs font-medium text-rose-600">{error}</span>}</div><div className={error ? "rounded-md ring-2 ring-rose-100 [&_input]:border-rose-400" : ""}>{children}</div></div>;
 }
 
-function Organizations({ rows, search, setSearch, statusFilter, setStatusFilter, onView, onEdit, onStatus, onDelete }) {
+function Organizations({ rows, search, setSearch, statusFilter, setStatusFilter, onView, onEdit, onStatus, onDelete, recentlyCreated, onClearRecentlyCreated }) {
   return <div><PageHeader eyebrow="Organizations" title="Organization directory" description="View and safely manage organizations and their linked Admin CEOs." />
+    {recentlyCreated && (
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/80 p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600 text-white font-bold">
+            <Building2 size={20} />
+          </span>
+          <div>
+            <p className="font-bold text-slate-900">Organization "{recentlyCreated.companyName}" ({recentlyCreated.orgId || "ID"}) created successfully!</p>
+            <p className="text-xs text-slate-600">Admin CEO: {recentlyCreated.adminName} · {recentlyCreated.adminEmail}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onEdit({ ...recentlyCreated })}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 transition"
+          >
+            <Edit3 size={14} /> Edit This Organization
+          </button>
+          <button
+            type="button"
+            onClick={onClearRecentlyCreated}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )}
     <SectionCard title="All organizations"><SearchFilterBar search={search} onSearch={setSearch} placeholder="Search organization, category, Admin CEO, city or state"><Select label="" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></Select></SearchFilterBar>
       <OrganizationTable rows={rows} actions={{ onView, onEdit, onStatus, onDelete }} />
     </SectionCard>

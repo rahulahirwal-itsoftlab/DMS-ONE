@@ -14,7 +14,7 @@ const { hasAdminManagers } = require("../utils/managerAssignment");
 const { licenseSystemEnabled } = require("../utils/featureFlags");
 
 const readRules = [
-  { pattern: /^\/(?:dashboard|company|policies|dealers)(?:\/|$)/, roles: ADMIN_READ_ROLES },
+  { pattern: /^\/(?:dashboard|company|policies|dealers|dealer-managers)(?:\/|$)/, roles: ADMIN_READ_ROLES },
   { pattern: /^\/(?:dealer-sales|dealer-performance|license-status|license-requests|reports)(?:\/|$)/, roles: ADMIN_DEALER_ROLES },
   { pattern: /^\/(?:products|inventory|stock|orders|delivery|dealer-wise-stock|stock-transfer-requests)(?:\/|$)/, roles: [...ADMIN_PRODUCT_DELIVERY_ROLES, "DEALER_MANAGER"] },
   { pattern: /^\/(?:finance|payments|invoices|dealer-wise-payment-list|credit)(?:\/|$)/, roles: [...ADMIN_FINANCE_ROLES, "DEALER_MANAGER"] },
@@ -28,7 +28,7 @@ function adminSectionGuard(req, res, next) {
   if (req.user.role === "DEALER_MANAGER" && /^\/credit\/(?:rewards|redemptions|dealer-wallets)(?:\/|$)/.test(req.path) && ["GET"].includes(req.method)) return next();
 
   // Managers may perform work only inside their assigned operational section.
-  if (hasAnyRole(req.user, ADMIN_DEALER_ROLES) && req.user.role === "DEALER_MANAGER" && /^\/(?:dealers|license-requests)(?:\/|$)/.test(req.path)) return next();
+  if (hasAnyRole(req.user, ADMIN_DEALER_ROLES) && req.user.role === "DEALER_MANAGER" && /^\/(?:dealers|dealer-managers|license-requests)(?:\/|$)/.test(req.path)) return next();
   if (hasAnyRole(req.user, ADMIN_PRODUCT_DELIVERY_ROLES) && req.user.role === "PRODUCT_DELIVERY_MANAGER" && /^\/(?:products|inventory|orders|delivery|stock-transfer-requests)(?:\/|$)/.test(req.path)) return next();
   if (hasAnyRole(req.user, ADMIN_FINANCE_ROLES) && req.user.role === "FINANCE_MANAGER" && /^\/(?:finance|payments|invoices|credit)(?:\/|$)/.test(req.path)) return next();
   return res.status(403).json({ message: "Access denied" });
@@ -41,6 +41,7 @@ async function blockAdminCeoAssignedWork(req, res, next) {
   if (!(await hasAdminManagers(req.user.companyId))) return next();
   const assignedPrefixes = [
     /^\/dealers/,
+    /^\/dealer-managers/,
     /^\/products/,
     /^\/inventory/,
     /^\/orders/,
@@ -68,6 +69,11 @@ router.get("/dealers/:id", ctrl.getDealer);
 router.route("/dealers/:id").put(ctrl.updateDealer).delete(ctrl.deleteDealer);
 router.patch("/dealers/:id/licenses", ctrl.updateDealerLicenses);
 router.patch("/dealers/:id/status", ctrl.setDealerStatus);
+router.get("/dealers/:id/managers", ctrl.getDealerManagers);
+router.post("/dealers/:id/managers", ctrl.createDealerManager);
+router.get("/dealer-managers", ctrl.getAllDealerManagers);
+router.route("/dealer-managers/:id").put(ctrl.updateDealerManager).delete(ctrl.deleteDealerManager);
+router.patch("/dealer-managers/:id/status", ctrl.updateDealerManagerStatus);
 router.route("/products").get(ctrl.products).post(productImageUpload.single("image"), ctrl.createProduct);
 router.put("/products/:id", productImageUpload.single("image"), ctrl.updateProduct);
 router.delete("/products/:id", ctrl.deleteProduct);

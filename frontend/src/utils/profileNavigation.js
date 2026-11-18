@@ -32,6 +32,7 @@ export const roleTabs = {
   ADMIN: [
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "licenseUpgrade", label: "Licenses", icon: "credits" },
+    { id: "adminManagers", label: "Managers", icon: "dealers" },
     { id: "dealers", label: "Dealers", icon: "dealers" },
     { id: "dealerPerformance", label: "Dealer Performance", icon: "performance" },
     { id: "products", label: "Products", icon: "products" },

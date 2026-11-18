@@ -37,15 +37,15 @@ function normalizeStatus(status) {
   return "active";
 }
 
-function organizationValidation(body, { requireFields = false } = {}) {
+function organizationValidation(body, { requireFields = false, isUpdate = false } = {}) {
   const errors = [];
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   ["phone", "adminPhone"].forEach((field) => {
     if (body[field] != null && body[field] !== "" && !/^\d{7,10}$/.test(String(body[field]).trim())) errors.push(`${field === "phone" ? "Organization" : "Admin CEO"} phone must contain 7 to 10 digits`);
   });
-  if (body.startDate && body.startDate < today) errors.push("Start date cannot be in the past");
-  if (body.endDate && body.endDate < today) errors.push("End date cannot be in the past");
+  if (!isUpdate && body.startDate && body.startDate < today) errors.push("Start date cannot be in the past");
+  if (!isUpdate && body.endDate && body.endDate < today) errors.push("End date cannot be in the past");
   if (body.startDate && body.endDate && body.endDate < body.startDate) errors.push("End date must be on or after the start date");
   if (body.numberOfLicenses != null && (!Number.isInteger(Number(body.numberOfLicenses)) || Number(body.numberOfLicenses) < 1)) errors.push("Number of licenses must be a positive whole number");
   if (requireFields && !body.startDate) errors.push("Start date is required");
@@ -199,7 +199,7 @@ exports.getOrganization = asyncHandler(async (req, res) => {
 exports.updateOrganization = asyncHandler(async (req, res) => {
   const company = await Company.findByPk(req.params.id);
   if (!company || company.status === "deleted") return res.status(404).json({ message: "Organization not found" });
-  let validationError = organizationValidation(req.body);
+  let validationError = organizationValidation(req.body, { isUpdate: true });
   if (!validationError && (Object.prototype.hasOwnProperty.call(req.body, "startDate") || Object.prototype.hasOwnProperty.call(req.body, "endDate"))) {
     const nextStart = req.body.startDate || company.startDate;
     const nextEnd = req.body.endDate || company.endDate;

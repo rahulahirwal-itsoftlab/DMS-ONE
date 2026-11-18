@@ -1,8 +1,10 @@
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
-const path = require("path");
 const { superAdminManagerRolesEnabled } = require("./utils/featureFlags");
 const { sequelize } = require("./models");
 

@@ -92,6 +92,9 @@ import { formatTitleCase } from "../utils/textFormatter";
     const [dealerForm, setDealerForm] = useState({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", state: "", city: "", pincode: "", address: "", allocatedLicenses: 1 });
     const [showDealerPassword, setShowDealerPassword] = useState(false);
     const [showDealerConfirmPassword, setShowDealerConfirmPassword] = useState(false);
+    const [editingDealer, setEditingDealer] = useState(null);
+    const [justCreatedDealer, setJustCreatedDealer] = useState(null);
+    const [managingDealerManagers, setManagingDealerManagers] = useState(null);
     const [productForm, setProductForm] = useState({ productName: "", category: "", description: "", manufacturingDate: "", expiryDate: "", price: 0, quantity: 0, lowStockLimit: 10, creditCoins: 0, status: "active" });
     const [variantRows, setVariantRows] = useState([{ variantName: "Standard", colorName: "Default", stockQuantity: 0, priceOverride: "", skuSuffix: "", status: "active" }]);
     const [editingProduct, setEditingProduct] = useState(null);
@@ -119,13 +122,31 @@ import { formatTitleCase } from "../utils/textFormatter";
     const load = async (force = false) => {
       setLoading(true);
       setLoadError("");
+      const dashboardEndpoints = user?.role === "ADMIN_CEO"
+        ? []
+        : user?.role === "FINANCE_MANAGER"
+        ? ["dashboard", "dashboard/analytics", "finance/payments", "finance/approved-orders"]
+        : user?.role === "PRODUCT_DELIVERY_MANAGER"
+        ? ["dashboard", "dashboard/analytics", "products", "orders", "stock/dealers"]
+        : ["dashboard", "dashboard/analytics", "finance/payments"];
+
       const endpointByTab = {
-        dashboard: ["dashboard", "dashboard/analytics"], licenseUpgrade: ["license-status"], dealers: ["dealers"], dealerPerformance: ["dealer-performance", "products"],
-        products: ["products", "stock/dealers"], inventory: ["products", "stock/dealers"], orders: ["orders"], delivery: ["orders"],
-        finance: ["finance/approved-orders", "finance/payments", "dealers"], creditManagement: ["credit/summary", "credit/rewards", "credit/redemptions", "credit/dealer-wallets"],
-        dealerSales: ["dealer-sales", "dealers", "products"], messages: ["messages/conversations"], policies: ["policies"], reports: ["reports"]
+        dashboard: dashboardEndpoints,
+        licenseUpgrade: ["license-status"],
+        dealers: ["dealers"],
+        dealerPerformance: ["dealer-performance", "products"],
+        products: ["products", "stock/dealers"],
+        inventory: ["products", "stock/dealers"],
+        orders: ["orders"],
+        delivery: ["orders"],
+        finance: ["finance/approved-orders", "finance/payments", "dealers"],
+        creditManagement: ["credit/summary", "credit/rewards", "credit/redemptions", "credit/dealer-wallets"],
+        dealerSales: ["dealer-sales", "dealers", "products"],
+        messages: ["messages/conversations"],
+        policies: ["policies"],
+        reports: ["reports"]
       };
-      const endpoints = user?.role === "ADMIN_CEO" && activeTab === "dashboard" ? [] : (endpointByTab[activeTab] || []);
+      const endpoints = endpointByTab[activeTab] || [];
       const result = await Promise.allSettled([
         ...endpoints.map((e) => cachedGet(api, `/admin/${e}`, {}, { force })),
         cachedGet(api, "/internal-updates", {}, { force })
@@ -173,6 +194,34 @@ import { formatTitleCase } from "../utils/textFormatter";
         if (error.response?.data?.code === "LICENSE_LIMIT_REACHED") setActiveTab("licenseUpgrade");
         alert(message);
       }
+    };
+
+    const createDealerAction = async (e) => {
+      e.preventDefault();
+      if (dealerForm.password !== dealerForm.confirmPassword) return alert("Passwords do not match");
+      if (dealerForm.pincode && !/^\d{6}$/.test(String(dealerForm.pincode))) return alert("Pincode must be exactly 6 digits");
+      if (dealerForm.phone && !/^\d{10}$/.test(String(dealerForm.phone))) return alert("Phone must be exactly 10 digits");
+      try {
+        const res = await api.post("/admin/dealers", dealerForm);
+        const created = res.data?.dealer || res.data;
+        setJustCreatedDealer(created);
+        setDealerError("");
+        setDealerForm({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", state: "", city: "", pincode: "", address: "", allocatedLicenses: 1 });
+        load(true);
+      } catch (error) {
+        const message = error.response?.data?.message || "Unable to create dealer. Please check the form.";
+        setDealerError(message);
+        if (error.response?.data?.code === "LICENSE_LIMIT_REACHED") setActiveTab("licenseUpgrade");
+        alert(message);
+      }
+    };
+
+    const saveDealerEdit = async (dealerId, updates) => {
+      await api.put(`/admin/dealers/${dealerId}`, updates);
+      if (updates.allocatedLicenses) {
+        await api.patch(`/admin/dealers/${dealerId}/licenses`, { allocatedLicenses: updates.allocatedLicenses });
+      }
+      load(true);
     };
 
     const updateOrder = async (id, status) => {
@@ -325,13 +374,31 @@ import { formatTitleCase } from "../utils/textFormatter";
         {activeTab === "dealerPerformance" && <DealerPerformancePanel data={data["dealer-performance"]} filters={performanceFilter} setFilters={setPerformanceFilter} reload={loadDealerPerformance} products={data.products || []} />}
         {activeTab === "dealers" && (
           <>
+            {justCreatedDealer && (
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-600 text-white font-bold">✓</span>
+                  <div>
+                    <p className="font-bold text-slate-900">Dealer "{justCreatedDealer.dealerName}" created successfully!</p>
+                    <p className="text-xs text-slate-600">Owner: {justCreatedDealer.ownerName} · Email: {justCreatedDealer.email} · Phone: {justCreatedDealer.phone || "-"}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => setEditingDealer({ ...justCreatedDealer })}>
+                    <Pencil size={14} /> Edit This Dealer
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => setManagingDealerManagers({ ...justCreatedDealer })}>
+                    <Users size={14} /> Add Dealer Manager
+                  </Button>
+                  <button type="button" onClick={() => setJustCreatedDealer(null)} className="rounded-md p-1.5 text-slate-400 hover:text-slate-600">
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
             <Section title="Create dealer">
               {dealerError && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{dealerError}</div>}
-              <FormGrid onSubmit={(e) => {
-                e.preventDefault();
-                if (dealerForm.password !== dealerForm.confirmPassword) return alert("Passwords do not match");
-                create("/admin/dealers", dealerForm, () => setDealerForm({ dealerName: "", ownerName: "", email: "", password: "", confirmPassword: "", phone: "", city: "", state: "", pincode: "", address: "", allocatedLicenses: 1 }));
-              }}>
+              <FormGrid onSubmit={createDealerAction}>
                 <TextField label="Dealer Name" value={dealerForm.dealerName} onChange={(e) => setDealerForm({ ...dealerForm, dealerName: e.target.value })} required />
                 <TextField label="Owner Name" value={dealerForm.ownerName} onChange={(e) => setDealerForm({ ...dealerForm, ownerName: e.target.value })} required />
                 <TextField label="Email" type="email" value={dealerForm.email} onChange={(e) => setDealerForm({ ...dealerForm, email: e.target.value })} required />
@@ -348,7 +415,58 @@ import { formatTitleCase } from "../utils/textFormatter";
                 <div className="md:col-span-2"><Button type="submit"><Plus size={16} /> Create Dealer</Button></div>
               </FormGrid>
             </Section>
-            <SimpleTable title="Dealer list" rows={data.dealers} cols={["dealerName", "ownerName", "email", "allocatedLicenses", "state", "city", "pincode", "status"]} />
+            <SimpleTable
+              title="Dealer list"
+              rows={data.dealers || []}
+              cols={["dealerName", "ownerName", "email", "allocatedLicenses", "state", "city", "pincode", "status", "actions"]}
+              renderCell={(row, column) => {
+                if (column === "status") {
+                  return (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const nextStatus = row.status === "active" ? "inactive" : "active";
+                          await api.patch(`/admin/dealers/${row.id}/status`, { status: nextStatus });
+                          load(true);
+                        } catch (err) {
+                          alert(err.response?.data?.message || "Failed to update status");
+                        }
+                      }}
+                      className="cursor-pointer transition hover:opacity-80"
+                      title="Click to toggle status"
+                    >
+                      <StatusBadge value={row.status} />
+                    </button>
+                  );
+                }
+                if (column === "actions") {
+                  return (
+                    <div className="flex items-center gap-2 min-w-max">
+                      <button
+                        type="button"
+                        title="Edit dealer details"
+                        onClick={() => setEditingDealer({ ...row })}
+                        className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition"
+                      >
+                        <Pencil size={13} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        title="View & add dealer managers"
+                        onClick={() => setManagingDealerManagers({ ...row })}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition"
+                      >
+                        <Users size={13} /> Managers
+                      </button>
+                    </div>
+                  );
+                }
+                return undefined;
+              }}
+            />
+            {editingDealer && <EditDealerModal dealer={editingDealer} onClose={() => setEditingDealer(null)} onSave={saveDealerEdit} />}
+            {managingDealerManagers && <DealerManagersModal dealer={managingDealerManagers} onClose={() => setManagingDealerManagers(null)} onRefresh={() => load(true)} />}
           </>
         )}
         {activeTab === "products" && (
@@ -465,52 +583,175 @@ import { formatTitleCase } from "../utils/textFormatter";
 
   function FinanceManagerDashboard({ analytics, payments = [], stats = {}, fallbackCards = [] }) {
     const summary = analytics?.summary || {};
-    const statusData = Object.entries(payments.reduce((acc, payment) => ({ ...acc, [payment.paymentStatus || "pending"]: (acc[payment.paymentStatus || "pending"] || 0) + 1 }), {})).map(([status, count]) => ({ status, count }));
-    const methodData = Object.entries(payments.reduce((acc, payment) => ({ ...acc, [payment.paymentMethod || "not selected"]: (acc[payment.paymentMethod || "not selected"] || 0) + 1 }), {})).map(([method, count]) => ({ method, count, fill: method === "online" ? "#4F46E5" : method === "cash" ? "#0EA5E9" : "#94A3B8" }));
-    const dealerOutstanding = Object.values(payments.filter((payment) => payment.paymentStatus === "pending").reduce((acc, payment) => {
+    const financeStats = analytics?.financeStats || {};
+
+    const isCash = (m) => String(m || "").trim().toLowerCase() === "cash";
+    const isOnline = (m) => ["online", "upi", "card", "bank_transfer", "net_banking"].includes(String(m || "").trim().toLowerCase());
+
+    const realPendingCount = Number(stats.pendingPayments ?? financeStats.paymentStatusRatio?.find(r => r.status === 'pending')?.count ?? summary.pendingPayments ?? payments.filter((p) => String(p.paymentStatus).toLowerCase() === "pending").length ?? 0);
+    const realPaidCount = Number(stats.paidPayments ?? financeStats.paymentStatusRatio?.find(r => r.status === 'paid')?.count ?? summary.paidPayments ?? payments.filter((p) => String(p.paymentStatus).toLowerCase() === "paid").length ?? 0);
+    const realCashCount = Number(stats.cashPayments ?? payments.filter((p) => isCash(p.paymentMethod)).length ?? (financeStats.cashPaymentTotal > 0 ? 1 : 0));
+    const realOnlineCount = Number(stats.onlinePayments ?? payments.filter((p) => isOnline(p.paymentMethod)).length ?? (financeStats.onlinePaymentTotal > 0 ? 1 : 0));
+    const realTotalPending = Number(stats.totalPendingAmount ?? financeStats.pendingAmount ?? summary.totalPendingAmount ?? 0);
+    const realTotalPaid = Number(stats.totalPaidAmount ?? financeStats.paidAmount ?? summary.totalRevenue ?? 0);
+
+    const cards = [
+      ["Pending Payments", realPendingCount],
+      ["Paid Payments", realPaidCount],
+      ["Cash Payments", realCashCount],
+      ["Online Payments", realOnlineCount],
+      ["Total Pending", formatMoney(realTotalPending)],
+      ["Total Paid", formatMoney(realTotalPaid)]
+    ];
+
+    const statusCounts = payments.reduce((acc, payment) => {
+      const s = String(payment.paymentStatus || "pending").toLowerCase();
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {});
+    if (Object.keys(statusCounts).length === 0) {
+      if (realPaidCount > 0) statusCounts.paid = realPaidCount;
+      if (realPendingCount > 0) statusCounts.pending = realPendingCount;
+    }
+    const statusData = Object.entries(statusCounts).map(([status, count]) => ({ status, count }));
+    const totalPaymentsCount = statusData.reduce((sum, row) => sum + Number(row.count || 0), 0);
+
+    const cashOnline = [
+      { name: "Cash", value: realCashCount, fill: "#0E7490" },
+      { name: "Online", value: realOnlineCount, fill: "#4F46E5" },
+      { name: "Pending", value: realPendingCount, fill: "#F59E0B" }
+    ];
+    const totalMethodCount = cashOnline.reduce((sum, item) => sum + Number(item.value || 0), 0);
+
+    let dealerOutstanding = Object.values(payments.filter((payment) => String(payment.paymentStatus).toLowerCase() === "pending").reduce((acc, payment) => {
       const dealer = payment.Dealer?.dealerName || "Dealer";
       acc[dealer] = acc[dealer] || { dealer, amount: 0, invoices: 0 };
       acc[dealer].amount += Number(payment.amount || 0);
       acc[dealer].invoices += 1;
       return acc;
     }, {})).sort((a, b) => b.amount - a.amount).slice(0, 10);
+
+    if (!dealerOutstanding.length && financeStats.dealerWiseOutstandingPayment?.length) {
+      dealerOutstanding = financeStats.dealerWiseOutstandingPayment.map((d) => ({
+        dealer: d.dealerName,
+        amount: Number(d.amount || 0),
+        invoices: 1
+      })).filter((d) => d.amount > 0);
+    }
+
     const monthlyArea = payments.reduce((acc, payment) => {
-      const key = payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : "No date";
+      const key = payment.createdAt ? new Date(payment.createdAt).toISOString().slice(0, 10) : "Recent";
       acc[key] = acc[key] || { date: key, paid: 0, pending: 0 };
-      if (payment.paymentStatus === "paid") acc[key].paid += Number(payment.amount || 0);
-      else acc[key].pending += Number(payment.amount || 0);
+      if (String(payment.paymentStatus).toLowerCase() === "paid") {
+        acc[key].paid += Number(payment.amount || 0);
+      } else {
+        acc[key].pending += Number(payment.amount || 0);
+      }
       return acc;
     }, {});
-    const cashOnline = [
-      { name: "Cash", value: stats.cashPayments || payments.filter((p) => p.paymentMethod === "cash").length, fill: "#0E7490" },
-      { name: "Online", value: stats.onlinePayments || payments.filter((p) => p.paymentMethod === "online").length, fill: "#4F46E5" },
-      { name: "Pending", value: stats.pendingPayments || payments.filter((p) => p.paymentStatus === "pending").length, fill: "#F59E0B" }
-    ];
-    const cards = [
-      ["Pending Payments", stats.pendingPayments ?? summary.pendingPayments ?? 0],
-      ["Paid Payments", stats.paidPayments ?? payments.filter((p) => p.paymentStatus === "paid").length],
-      ["Cash Payments", stats.cashPayments ?? payments.filter((p) => p.paymentMethod === "cash").length],
-      ["Online Payments", stats.onlinePayments ?? payments.filter((p) => p.paymentMethod === "online").length],
-      ["Total Pending", formatMoney(stats.totalPendingAmount ?? summary.totalPendingAmount ?? 0)],
-      ["Total Paid", formatMoney(stats.totalPaidAmount ?? summary.totalRevenue ?? 0)]
-    ];
+    const areaData = Object.values(monthlyArea).sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
+
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">{(cards.length ? cards : fallbackCards).map(([label, value]) => <ManagerKpiCard key={label} label={label} value={value ?? 0} />)}</div>
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(190px,1fr))] gap-4">
+          {(cards.length ? cards : fallbackCards).map(([label, value]) => (
+            <ManagerKpiCard key={label} label={label} value={value ?? 0} />
+          ))}
+        </div>
         <div className="grid gap-6 xl:grid-cols-2">
-          <Section title="Payment status bar graph">
-            <div className="relative h-80"><ResponsiveContainer><PieChart><Pie data={statusData} dataKey="count" nameKey="status" innerRadius={72} outerRadius={108} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{statusData.map((row, index) => <Cell key={row.status} fill={row.status === "paid" ? "#16A34A" : row.status === "pending" ? "#F59E0B" : ["#64748B", "#4F46E5"][index % 2]} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={34} /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 bottom-8 flex flex-col items-center justify-center"><span className="text-3xl font-black text-slate-900">{statusData.reduce((sum, row) => sum + Number(row.count || 0), 0).toLocaleString("en-IN")}</span><span className="text-xs font-bold uppercase tracking-wide text-slate-500">Payments</span></div></div>
+          <Section title="Payment status overview">
+            {totalPaymentsCount > 0 ? (
+              <div className="relative h-80">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={statusData} dataKey="count" nameKey="status" innerRadius={72} outerRadius={108} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>
+                      {statusData.map((row, index) => (
+                        <Cell key={row.status} fill={row.status === "paid" ? "#16A34A" : row.status === "pending" ? "#F59E0B" : ["#64748B", "#4F46E5"][index % 2]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={34} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 bottom-8 flex flex-col items-center justify-center">
+                  <span className="text-3xl font-black text-slate-900">{totalPaymentsCount.toLocaleString("en-IN")}</span>
+                  <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Payments</span>
+                </div>
+              </div>
+            ) : (
+              <Empty text="No payment status records recorded yet" />
+            )}
           </Section>
-          <Section title="Payment method radial graph">
-            <div className="h-80"><ResponsiveContainer><PieChart><Pie data={cashOnline} dataKey="value" nameKey="name" innerRadius={58} outerRadius={98} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>{cashOnline.map((item) => <Cell key={item.name} fill={item.fill} />)}</Pie><Tooltip /><Legend verticalAlign="bottom" height={34} /></PieChart></ResponsiveContainer></div>
+          <Section title="Payment method distribution">
+            {totalMethodCount > 0 ? (
+              <div className="h-80">
+                <ResponsiveContainer>
+                  <PieChart>
+                    <Pie data={cashOnline.filter((i) => i.value > 0)} dataKey="value" nameKey="name" innerRadius={58} outerRadius={98} paddingAngle={4} stroke="white" strokeWidth={3} animationDuration={900}>
+                      {cashOnline.filter((i) => i.value > 0).map((item) => (
+                        <Cell key={item.name} fill={item.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={34} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <Empty text="No payment method data recorded yet" />
+            )}
           </Section>
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
           <Section title="Paid vs pending amount area graph">
-            <div className="h-80"><ResponsiveContainer><AreaChart data={Object.values(monthlyArea).sort((a, b) => a.date.localeCompare(b.date)).slice(-14)}><defs><linearGradient id="paidFinanceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#16A34A" stopOpacity={0.45} /><stop offset="95%" stopColor="#16A34A" stopOpacity={0.05} /></linearGradient><linearGradient id="pendingFinanceFill" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#F59E0B" stopOpacity={0.45} /><stop offset="95%" stopColor="#F59E0B" stopOpacity={0.05} /></linearGradient></defs><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(value) => formatMoney(value)} /><Legend /><Area type="monotone" dataKey="paid" stroke="#16A34A" fill="url(#paidFinanceFill)" /><Area type="monotone" dataKey="pending" stroke="#F59E0B" fill="url(#pendingFinanceFill)" /></AreaChart></ResponsiveContainer></div>
+            {areaData.length > 0 ? (
+              <div className="h-80">
+                <ResponsiveContainer>
+                  <AreaChart data={areaData}>
+                    <defs>
+                      <linearGradient id="paidFinanceFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#16A34A" stopOpacity={0.45} />
+                        <stop offset="95%" stopColor="#16A34A" stopOpacity={0.05} />
+                      </linearGradient>
+                      <linearGradient id="pendingFinanceFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.45} />
+                        <stop offset="95%" stopColor="#F59E0B" stopOpacity={0.05} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip formatter={(value) => formatMoney(value)} />
+                    <Legend />
+                    <Area type="monotone" dataKey="paid" stroke="#16A34A" fill="url(#paidFinanceFill)" />
+                    <Area type="monotone" dataKey="pending" stroke="#F59E0B" fill="url(#pendingFinanceFill)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <Empty text="No transaction history recorded yet" />
+            )}
           </Section>
           <Section title="Dealer-wise outstanding amount">
-            <div className="h-80"><ResponsiveContainer><BarChart data={dealerOutstanding} layout="vertical" margin={{ left: 8, right: 22, top: 8, bottom: 8 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} /><XAxis type="number" tickFormatter={(value) => `₹${Number(value || 0).toLocaleString("en-IN")}`} /><YAxis type="category" dataKey="dealer" width={105} tick={{ fontSize: 11 }} /><Tooltip formatter={(value) => formatMoney(value)} /><Bar dataKey="amount" fill="#0E7490" radius={[0, 7, 7, 0]} maxBarSize={28} animationDuration={900} /></BarChart></ResponsiveContainer></div>
+            {dealerOutstanding.length > 0 ? (
+              <div className="h-80">
+                <ResponsiveContainer>
+                  <BarChart data={dealerOutstanding} layout="vertical" margin={{ left: 8, right: 22, top: 8, bottom: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tickFormatter={(value) => `₹${Number(value || 0).toLocaleString("en-IN")}`} />
+                    <YAxis type="category" dataKey="dealer" width={105} tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(value) => formatMoney(value)} />
+                    <Bar dataKey="amount" fill="#0E7490" radius={[0, 7, 7, 0]} maxBarSize={28} animationDuration={900} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-80 text-center p-6">
+                <CheckCircle2 size={40} className="text-emerald-500 mb-2" />
+                <p className="font-bold text-slate-800 text-sm">All Dealer Balances Cleared</p>
+                <p className="text-xs text-slate-500 mt-1">There are no outstanding pending payments across dealers.</p>
+              </div>
+            )}
           </Section>
         </div>
         <div className="grid gap-6 xl:grid-cols-2">
@@ -754,36 +995,43 @@ import { formatTitleCase } from "../utils/textFormatter";
             const product = item.Product || item.product || {};
             const variant = item.ProductVariant || item;
             const sku = fullVariantSku(product, variant);
+            const rawSku = String(sku || "-");
+            const displaySku = rawSku.length > 13 ? `${rawSku.slice(0, 7)}…${rawSku.slice(-4)}` : rawSku;
             const variantText = item.variantName || variant.variantName;
             const colorText = item.colorName || variant.colorName;
             return (
-              <div key={item.id || index} className="flex items-center justify-between gap-2.5 rounded-lg border border-slate-200 bg-slate-50/80 p-2.5 text-xs shadow-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
+              <div key={item.id || index} className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-2.5 text-xs shadow-xs hover:border-slate-300 transition">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
                   {product.image ? (
-                    <img src={fileUrl(product.image)} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover border border-slate-200" onError={(e) => { e.currentTarget.style.display = "none"; }} />
+                    <img src={fileUrl(product.image)} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200 shadow-xs" onError={(e) => { e.currentTarget.style.display = "none"; }} />
                   ) : (
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-slate-200 text-[10px] font-bold text-slate-500 uppercase">Item</div>
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-200 text-[10px] font-bold text-slate-500 uppercase">Item</div>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-bold text-slate-900 truncate" title={product.productName}>{product.productName || "Product"}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <span className="font-mono text-indigo-700 bg-white border border-slate-200 px-1.5 py-0.5 rounded text-[11px] font-semibold inline-flex items-center gap-1">
-                        SKU: {sku} <CopySku value={sku} />
+                      <span
+                        className="font-mono text-indigo-700 bg-white border border-indigo-200/80 px-2 py-0.5 rounded-md text-[11px] font-bold inline-flex items-center gap-1 shadow-xs max-w-full"
+                        title={`Full SKU: ${rawSku}`}
+                      >
+                        <span className="text-slate-400 font-normal text-[10px]">SKU:</span>
+                        <span className="truncate">{displaySku}</span>
+                        <CopySku value={rawSku} />
                       </span>
                       {(variantText || colorText) && (
-                        <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded text-slate-600 font-medium text-[11px]">
-                          Variant: {variantText || "Standard"}{colorText ? ` / ${colorText}` : ""}
+                        <span className="bg-white border border-slate-200 px-1.5 py-0.5 rounded-md text-slate-600 font-medium text-[11px] truncate max-w-[130px]" title={`Variant: ${variantText || "Standard"}${colorText ? ` / ${colorText}` : ""}`}>
+                          {variantText || "Standard"}{colorText ? ` / ${colorText}` : ""}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 font-bold text-emerald-800 text-xs">
+                <div className="flex flex-col items-end gap-1 shrink-0 ml-auto">
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 font-bold text-emerald-800 text-xs whitespace-nowrap">
                     Quantity: {item.quantity} units
                   </span>
                   {item.price && (
-                    <span className="text-[11px] text-slate-500 font-semibold">
+                    <span className="text-[11px] text-slate-500 font-semibold whitespace-nowrap">
                       {formatMoney(item.price)}/ea
                     </span>
                   )}
@@ -867,16 +1115,69 @@ import { formatTitleCase } from "../utils/textFormatter";
     return (
       <ProductModalShell title={product.productName || "Product details"} onClose={onClose}>
         <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-          {product.image ? <img src={fileUrl(product.image)} alt={product.productName} className="h-72 w-full rounded-xl object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} /> : <div className="grid h-72 w-full place-items-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-400">No image</div>}
-          <div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {detailRows.map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-stone-50 p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words font-semibold text-slate-900">{value ?? "-"}</p></div>)}
+          {product.image ? (
+            <img
+              src={fileUrl(product.image)}
+              alt={product.productName}
+              className="h-72 w-full rounded-xl object-cover shadow-sm"
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          ) : (
+            <div className="grid h-72 w-full place-items-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-400">
+              No image
             </div>
-            <div className="mt-5 rounded-xl border border-slate-200">
-              <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 font-semibold">Variants and SKU numbers</div>
-              <div className="divide-y divide-slate-100">
-                {(product.variants || []).map((variant) => <div key={variant.id || variant.skuSuffix} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-5"><span className="font-semibold">{variant.variantName}</span><span>{variant.colorName}</span><span className="font-mono text-xs text-indigo-700">{fullVariantSku(product, variant)}</span><span>{variant.stockQuantity} stock</span><StatusBadge value={variant.status} /></div>)}
+          )}
+          <div className="min-w-0">
+            <div className="grid gap-3 sm:grid-cols-2">
+              {detailRows.map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-xl border border-slate-200 bg-stone-50 p-3 shadow-xs">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p>
+                  {label === "Main SKU" ? (
+                    <div className="mt-1 flex items-center justify-between gap-2 min-w-0 overflow-hidden">
+                      <span
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-indigo-200/80 bg-indigo-50/80 px-2.5 py-1 font-mono text-xs font-bold text-indigo-700"
+                        title={`Full SKU: ${value || "-"}`}
+                      >
+                        <span className="truncate">
+                          {String(value || "-").length > 14
+                            ? `${String(value).slice(0, 8)}…${String(value).slice(-4)}`
+                            : String(value || "-")}
+                        </span>
+                        <CopySku value={value} />
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="mt-1 break-words font-semibold text-slate-900">{value ?? "-"}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 rounded-xl border border-slate-200 overflow-hidden">
+              <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 font-semibold text-slate-900">
+                Variants and SKU numbers
               </div>
+              {(product.variants || []).length > 0 ? (
+                <div className="divide-y divide-slate-100">
+                  {product.variants.map((variant) => {
+                    const variantSku = fullVariantSku(product, variant);
+                    return (
+                      <div key={variant.id || variant.skuSuffix} className="grid items-center gap-2 px-4 py-3 text-sm md:grid-cols-5">
+                        <span className="font-semibold text-slate-900 truncate" title={variant.variantName}>{variant.variantName}</span>
+                        <span className="text-slate-600 truncate" title={variant.colorName}>{variant.colorName || "-"}</span>
+                        <div className="min-w-0 overflow-hidden">
+                          <CompactSku value={variantSku} />
+                        </div>
+                        <span className="font-medium text-slate-700">{variant.stockQuantity ?? 0} units</span>
+                        <div>
+                          <StatusBadge value={variant.status} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-4 text-center text-xs text-slate-500">No variants for this product</div>
+              )}
             </div>
           </div>
         </div>
@@ -1394,6 +1695,258 @@ import { formatTitleCase } from "../utils/textFormatter";
         </Section>
         {selectedManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setSelectedManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-details-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-details-title" className="text-xl font-bold text-slate-950">{selectedManager.name}</h2><p className="mt-1 text-sm text-slate-500">Complete Manager Details</p></div><button type="button" aria-label="Close manager details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setSelectedManager(null)}><X size={18} /></button></div><dl className="mt-6 grid gap-4 sm:grid-cols-2">{[["Email", selectedManager.email], ["Phone", selectedManager.phone || "-"], ["Role", String(selectedManager.role || "-").replaceAll("_", " ")], ["Status", selectedManager.status], ["Created", formatDate(selectedManager.createdAt)]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm font-semibold capitalize text-slate-900">{value}</dd></div>)}</dl></div></div>}
         {editingManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setEditingManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-edit-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-edit-title" className="text-xl font-bold text-slate-950">Edit {editingManager.name}</h2><p className="mt-1 text-sm text-slate-500">Update Manager Details</p></div><button type="button" aria-label="Close edit manager" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setEditingManager(null)}><X size={18} /></button></div><form onSubmit={saveEdit} className="mt-6 space-y-4"><TextField label="Name" value={editingManager.name} onChange={(e) => setEditingManager({ ...editingManager, name: e.target.value })} required /><TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={editingManager.phone || ""} onChange={(e) => setEditingManager({ ...editingManager, phone: e.target.value.replace(/\D/g, '') })} required /><label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={editingManager.role} onChange={(e) => setEditingManager({ ...editingManager, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label><div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setEditingManager(null)}>Cancel</Button><Button type="submit">Save Changes</Button></div></form></div></div>}
+      </div>
+    );
+  }
+
+  function EditDealerModal({ dealer, onClose, onSave }) {
+    const [form, setForm] = useState({
+      dealerName: dealer.dealerName || "",
+      ownerName: dealer.ownerName || "",
+      email: dealer.email || "",
+      phone: dealer.phone || "",
+      allocatedLicenses: dealer.allocatedLicenses || 1,
+      state: dealer.state || "",
+      city: dealer.city || "",
+      pincode: dealer.pincode || "",
+      address: dealer.address || "",
+      status: dealer.status || "active"
+    });
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      if (form.pincode && !/^\d{6}$/.test(String(form.pincode))) {
+        setError("Pincode must be exactly 6 digits");
+        return;
+      }
+      if (form.phone && !/^\d{10}$/.test(String(form.phone))) {
+        setError("Phone must be exactly 10 digits");
+        return;
+      }
+      setSaving(true);
+      setError("");
+      try {
+        await onSave(dealer.id, form);
+        onClose();
+      } catch (err) {
+        setError(err.response?.data?.message || "Failed to update dealer");
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+        <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Edit Dealer: {dealer.dealerName}</h2>
+              <p className="mt-1 text-sm text-slate-500">Update dealer profile, contact, license allocation and status.</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:text-slate-600">
+              <X size={18} />
+            </button>
+          </div>
+          {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
+          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <TextField label="Dealer Name" value={form.dealerName} onChange={(e) => setForm({ ...form, dealerName: e.target.value })} required />
+              <TextField label="Owner Name" value={form.ownerName} onChange={(e) => setForm({ ...form, ownerName: e.target.value })} required />
+              <TextField label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+              <TextField label="Phone" type="tel" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, '') })} required />
+              <TextField label="Allocated Licenses" type="number" min="1" value={form.allocatedLicenses} onChange={(e) => setForm({ ...form, allocatedLicenses: e.target.value })} required />
+              <label className="text-sm font-semibold text-slate-600">Status
+                <select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="blocked">Blocked</option>
+                </select>
+              </label>
+              <SearchableSelect label="State" options={Object.keys(INDIA_STATES_CITIES)} value={form.state} onChange={(val) => setForm({ ...form, state: val, city: "" })} placeholder="Select State..." required />
+              <SearchableSelect label="City" options={INDIA_STATES_CITIES[form.state] || []} value={form.city} onChange={(val) => setForm({ ...form, city: val })} placeholder="Select City..." required disabled={!form.state} />
+              <TextField label="Pincode" maxLength={6} value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value.replace(/\D/g, '') })} required />
+              <div className="sm:col-span-2">
+                <TextField label="Address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} required />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
+              <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+              <Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save Changes"}</Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  function DealerManagersModal({ dealer, onClose, onRefresh }) {
+    const [managers, setManagers] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [showForm, setShowForm] = useState(false);
+    const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", role: "DEALER_STOCK_INVENTORY_MANAGER" });
+    const [submitting, setSubmitting] = useState(false);
+    const [error, setError] = useState("");
+    const [message, setMessage] = useState("");
+
+    const loadManagers = async () => {
+      setLoading(true);
+      try {
+        const res = await api.get(`/admin/dealers/${dealer.id}/managers`);
+        setManagers(res.data || []);
+      } catch (err) {
+        setError("Failed to load dealer managers");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    useEffect(() => { loadManagers(); }, [dealer.id]);
+
+    const handleCreate = async (e) => {
+      e.preventDefault();
+      setSubmitting(true);
+      setError("");
+      setMessage("");
+      try {
+        await api.post(`/admin/dealers/${dealer.id}/managers`, form);
+        setForm({ name: "", email: "", phone: "", password: "", role: "DEALER_STOCK_INVENTORY_MANAGER" });
+        setShowForm(false);
+        setMessage("Dealer Manager added successfully!");
+        await loadManagers();
+        onRefresh?.();
+      } catch (err) {
+        setError(err.response?.data?.message || "Failed to add dealer manager");
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
+    const handleToggle = async (m) => {
+      try {
+        const nextStatus = m.status === "active" ? "inactive" : "active";
+        await api.patch(`/admin/dealer-managers/${m.id}/status`, { status: nextStatus });
+        await loadManagers();
+      } catch (err) {
+        alert("Failed to update status");
+      }
+    };
+
+    const handleDelete = async (m) => {
+      if (!confirm(`Delete manager ${m.name}?`)) return;
+      try {
+        await api.delete(`/admin/dealer-managers/${m.id}`);
+        await loadManagers();
+        onRefresh?.();
+      } catch (err) {
+        alert("Failed to delete manager");
+      }
+    };
+
+    const roleLabels = {
+      DEALER_STOCK_INVENTORY_MANAGER: "Inventory Manager",
+      DEALER_STOCK_DELIVERY_MANAGER: "Delivery Manager",
+      DEALER_SALES_FINANCE_MANAGER: "Sales & Finance Manager"
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+        <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-950">Dealer Managers: {dealer.dealerName}</h2>
+              <p className="mt-1 text-sm text-slate-500">Manage operational managers for this dealer (uses dealer licenses).</p>
+            </div>
+            <button type="button" onClick={onClose} className="rounded-md p-1.5 text-slate-400 hover:text-slate-600">
+              <X size={18} />
+            </button>
+          </div>
+
+          {message && <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">{message}</div>}
+          {error && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
+
+          <div className="mt-4 flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-700">Current Managers ({managers.length})</p>
+            <Button size="sm" onClick={() => setShowForm(!showForm)}>
+              <Plus size={14} /> {showForm ? "Cancel" : "Add Dealer Manager"}
+            </Button>
+          </div>
+
+          {showForm && (
+            <form onSubmit={handleCreate} className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">Add New Dealer Manager</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <TextField label="Full Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+                <TextField label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+                <TextField label="Phone" type="tel" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, '') })} />
+                <TextField label="Password" type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+                <div className="sm:col-span-2">
+                  <label className="text-sm font-semibold text-slate-600">Role
+                    <select className="mt-1 w-full rounded-md border border-slate-200 p-2.5 bg-white" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+                      <option value="DEALER_STOCK_INVENTORY_MANAGER">Stock & Inventory Manager</option>
+                      <option value="DEALER_STOCK_DELIVERY_MANAGER">Stock & Delivery Manager</option>
+                      <option value="DEALER_SALES_FINANCE_MANAGER">Sales & Finance Manager</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button size="sm" type="button" variant="secondary" onClick={() => setShowForm(false)}>Cancel</Button>
+                <Button size="sm" type="submit" disabled={submitting}>{submitting ? "Adding..." : "Add Manager"}</Button>
+              </div>
+            </form>
+          )}
+
+          <div className="mt-5">
+            {loading ? (
+              <div className="py-8 text-center text-sm text-slate-400">Loading managers...</div>
+            ) : managers.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
+                No dealer managers created yet for this dealer. Click "Add Dealer Manager" above to create one.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="p-3">Name</th>
+                      <th className="p-3">Email</th>
+                      <th className="p-3">Phone</th>
+                      <th className="p-3">Role</th>
+                      <th className="p-3">Status</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {managers.map((m) => (
+                      <tr key={m.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="p-3 font-semibold text-slate-900">{m.name}</td>
+                        <td className="p-3 text-slate-600">{m.email}</td>
+                        <td className="p-3 text-slate-600">{m.phone || "-"}</td>
+                        <td className="p-3 text-xs font-semibold text-indigo-700">{roleLabels[m.role] || m.role}</td>
+                        <td className="p-3">
+                          <button type="button" onClick={() => handleToggle(m)} title="Toggle status">
+                            <StatusBadge value={m.status} />
+                          </button>
+                        </td>
+                        <td className="p-3 text-right">
+                          <button type="button" onClick={() => handleDelete(m)} className="rounded p-1.5 text-rose-500 hover:bg-rose-50" title="Delete manager">
+                            <Trash2 size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-6 flex justify-end border-t border-slate-100 pt-4">
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+          </div>
+        </div>
       </div>
     );
   }

@@ -30,7 +30,8 @@ const cloudinaryService = require("../services/cloudinaryService");
 const cacheService = require("../services/cacheService");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
 const { awardCreditCoinsForOrder, creditStatsForCompany, getOrCreateWallet, dateWhere } = require("../utils/credit");
-const { licenseCapacity, licenseLimitError } = require("../utils/licenseService");
+const { licenseCapacity, dealerLicenseCapacity, licenseLimitError } = require("../utils/licenseService");
+const { hardDeleteUser } = require("../utils/userCleanup");
 const { licenseSystemEnabled } = require("../utils/featureFlags");
 
 const companyScope = (req) => ({ companyId: req.user.companyId });
@@ -334,8 +335,8 @@ exports.analytics = asyncHandler(async (req, res) => {
       totalRevenue: summary.totalRevenue,
       pendingAmount: summary.totalPendingAmount,
       paidAmount: sum(payments.filter((p) => p.paymentStatus === "paid"), (p) => p.amount),
-      cashPaymentTotal: sum(payments.filter((p) => p.paymentMethod === "cash"), (p) => p.amount),
-      onlinePaymentTotal: sum(payments.filter((p) => p.paymentMethod === "online"), (p) => p.amount),
+      cashPaymentTotal: sum(payments.filter((p) => String(p.paymentMethod || "").toLowerCase() === "cash"), (p) => p.amount),
+      onlinePaymentTotal: sum(payments.filter((p) => ["online", "upi", "card", "net_banking", "bank_transfer"].includes(String(p.paymentMethod || "").toLowerCase())), (p) => p.amount),
       paymentStatusRatio: ["pending", "paid", "failed"].map((status) => ({ status, count: payments.filter((p) => p.paymentStatus === status).length })),
       dealerWiseOutstandingPayment: Object.entries(pendingPaymentsByDealer).map(([dealerId, amount]) => ({ dealerId: Number(dealerId), dealerName: dealerName(Number(dealerId)), amount }))
     },
@@ -412,6 +413,7 @@ exports.dashboardData = async (companyId) => {
       deliveredOrders: orderMap.delivered || 0,
       rejectedOrders: orderMap.rejected || 0,
       pendingPayments: Number(pendingPayment?.count || 0),
+      paidPayments: Number(paidPayment?.count || 0),
       totalRevenue: Number(paidPayment?.total || 0),
       totalPendingAmount: Number(pendingPayment?.total || 0)
     };
@@ -611,6 +613,140 @@ exports.deleteDealer = asyncHandler(async (req, res) => {
     await User.update({ status: "inactive" }, { where: { dealerId: dealer.id, companyId: req.user.companyId }, transaction });
   });
   res.json({ message: "Dealer safely archived and login disabled", softDeleted: true, dependentRecords: orders + payments + inventory + sales + creditTransactions });
+});
+
+const dealerManagerRolesList = [
+  "DEALER_STOCK_INVENTORY_MANAGER",
+  "DEALER_STOCK_DELIVERY_MANAGER",
+  "DEALER_SALES_FINANCE_MANAGER"
+];
+
+exports.getAllDealerManagers = asyncHandler(async (req, res) => {
+  const managers = await User.findAll({
+    where: {
+      companyId: req.user.companyId,
+      role: { [Op.in]: dealerManagerRolesList }
+    },
+    include: [{ model: Dealer, attributes: ["id", "dealerName", "city", "state"] }],
+    attributes: ["id", "name", "email", "phone", "role", "status", "dealerId", "createdAt"],
+    order: [["createdAt", "DESC"]]
+  });
+  res.json(managers);
+});
+
+exports.getDealerManagers = asyncHandler(async (req, res) => {
+  const dealer = await Dealer.findOne({ where: { id: req.params.id, ...companyScope(req) } });
+  if (!dealer) return res.status(404).json({ message: "Dealer not found" });
+  const managers = await User.findAll({
+    where: {
+      dealerId: dealer.id,
+      companyId: req.user.companyId,
+      role: { [Op.in]: dealerManagerRolesList }
+    },
+    attributes: ["id", "name", "email", "phone", "role", "status", "dealerId", "createdAt"],
+    order: [["createdAt", "DESC"]]
+  });
+  res.json(managers);
+});
+
+exports.createDealerManager = asyncHandler(async (req, res) => {
+  const dealerId = req.params.id || req.body.dealerId;
+  const dealer = await Dealer.findOne({ where: { id: dealerId, ...companyScope(req) } });
+  if (!dealer) return res.status(404).json({ message: "Dealer not found" });
+
+  const { name, email, password, phone, role } = req.body;
+  if (!name || !email || !password || !role) return res.status(400).json({ message: "Name, email, password, and role are required" });
+  if (!dealerManagerRolesList.includes(role)) return res.status(400).json({ message: "Invalid dealer manager role" });
+  if (String(password).length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+  const normalizedEmail = String(email).trim().toLowerCase();
+  const existing = await User.findOne({ where: { email: normalizedEmail } });
+  if (existing) return res.status(409).json({ message: "A user with this email already exists" });
+
+  const manager = await User.sequelize.transaction(async (transaction) => {
+    const license = await dealerLicenseCapacity(dealer.id, { transaction });
+    if (license.availableLicenses < 1) {
+      throw licenseLimitError(`No dealer licenses available for ${dealer.dealerName}. Allocate more licenses to this dealer before creating a manager.`, license);
+    }
+    return User.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      phone: phone ? String(phone).replace(/\D/g, "") : null,
+      password,
+      role,
+      status: "active",
+      companyId: req.user.companyId,
+      dealerId: dealer.id
+    }, { transaction });
+  });
+
+  res.status(201).json({
+    id: manager.id,
+    name: manager.name,
+    email: manager.email,
+    phone: manager.phone,
+    role: manager.role,
+    status: manager.status,
+    dealerId: manager.dealerId
+  });
+});
+
+exports.updateDealerManager = asyncHandler(async (req, res) => {
+  const manager = await User.findOne({
+    where: {
+      id: req.params.id,
+      companyId: req.user.companyId,
+      role: { [Op.in]: dealerManagerRolesList }
+    }
+  });
+  if (!manager) return res.status(404).json({ message: "Dealer manager not found" });
+
+  const updates = {};
+  ["name", "phone", "status"].forEach((key) => {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  });
+  if (req.body.role) {
+    if (!dealerManagerRolesList.includes(req.body.role)) return res.status(400).json({ message: "Invalid dealer manager role" });
+    updates.role = req.body.role;
+  }
+  await manager.update(updates);
+  res.json({
+    id: manager.id,
+    name: manager.name,
+    email: manager.email,
+    phone: manager.phone,
+    role: manager.role,
+    status: manager.status,
+    dealerId: manager.dealerId
+  });
+});
+
+exports.updateDealerManagerStatus = asyncHandler(async (req, res) => {
+  const manager = await User.findOne({
+    where: {
+      id: req.params.id,
+      companyId: req.user.companyId,
+      role: { [Op.in]: dealerManagerRolesList }
+    }
+  });
+  if (!manager) return res.status(404).json({ message: "Dealer manager not found" });
+  const status = req.body.status || (manager.status === "active" ? "inactive" : "active");
+  await manager.update({ status });
+  res.json({ id: manager.id, status: manager.status });
+});
+
+exports.deleteDealerManager = asyncHandler(async (req, res) => {
+  const manager = await User.findOne({
+    where: {
+      id: req.params.id,
+      companyId: req.user.companyId,
+      role: { [Op.in]: dealerManagerRolesList }
+    }
+  });
+  if (!manager) return res.status(404).json({ message: "Dealer manager not found" });
+  await hardDeleteUser(manager.id);
+  await manager.destroy();
+  res.json({ message: "Dealer manager deleted successfully" });
 });
 
 exports.createProduct = asyncHandler(async (req, res) => {
@@ -1115,8 +1251,8 @@ exports.financeSummary = asyncHandler(async (req, res) => {
     stats: {
       pendingPayments: payments.filter((p) => p.paymentStatus === "pending").length,
       paidPayments: payments.filter((p) => p.paymentStatus === "paid").length,
-      cashPayments: payments.filter((p) => p.paymentMethod === "cash").length,
-      onlinePayments: payments.filter((p) => p.paymentMethod === "online").length,
+      cashPayments: payments.filter((p) => String(p.paymentMethod || "").toLowerCase() === "cash").length,
+      onlinePayments: payments.filter((p) => ["online", "upi", "card", "net_banking", "bank_transfer"].includes(String(p.paymentMethod || "").toLowerCase())).length,
       totalPendingAmount: sum(payments.filter((p) => p.paymentStatus === "pending")),
       totalPaidAmount: sum(payments.filter((p) => p.paymentStatus === "paid"))
     }

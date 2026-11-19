@@ -27,6 +27,7 @@ const {
 const { hasAdminManagers } = require("../utils/managerAssignment");
 const { publicPath } = require("../middleware/upload");
 const { licenseCapacity, licenseLimitError } = require("../utils/licenseService");
+const { broadcastTeamChatMessage } = require("../services/websocketService");
 
 const adminManagerRoles = ["DEALER_MANAGER", "PRODUCT_DELIVERY_MANAGER", "FINANCE_MANAGER"];
 const orgRoles = ["ADMIN_CEO", "ADMIN", ...adminManagerRoles];
@@ -506,7 +507,12 @@ exports.sendChat = asyncHandler(async (req, res) => {
     }
   }
 
-  res.status(201).json(message);
+  const fullMessage = await AdminInternalMessage.findByPk(message.id, {
+    include: [{ model: User, as: "sender", attributes: ["id", "name", "role"] }]
+  });
+  broadcastTeamChatMessage(fullMessage || message);
+
+  res.status(201).json(fullMessage || message);
 });
 
 exports.editChat = asyncHandler(async (req, res) => {

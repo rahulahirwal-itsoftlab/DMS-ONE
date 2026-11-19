@@ -41,12 +41,25 @@ function organizationValidation(body, { requireFields = false, isUpdate = false 
   const errors = [];
   const now = new Date();
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const toDateOnly = (d) => (d ? String(d).slice(0, 10) : null);
+
   ["phone", "adminPhone"].forEach((field) => {
-    if (body[field] != null && body[field] !== "" && !/^\d{7,10}$/.test(String(body[field]).trim())) errors.push(`${field === "phone" ? "Organization" : "Admin CEO"} phone must contain 7 to 10 digits`);
+    if (body[field] != null && body[field] !== "") {
+      const digits = String(body[field]).replace(/\D/g, "");
+      if (digits.length < 7 || digits.length > 10) {
+        errors.push(`${field === "phone" ? "Organization" : "Admin CEO"} phone must contain 7 to 10 digits`);
+      } else {
+        body[field] = digits;
+      }
+    }
   });
-  if (!isUpdate && body.startDate && body.startDate < today) errors.push("Start date cannot be in the past");
-  if (!isUpdate && body.endDate && body.endDate < today) errors.push("End date cannot be in the past");
-  if (body.startDate && body.endDate && body.endDate < body.startDate) errors.push("End date must be on or after the start date");
+
+  const startOnly = toDateOnly(body.startDate);
+  const endOnly = toDateOnly(body.endDate);
+
+  if (!isUpdate && startOnly && startOnly < today) errors.push("Start date cannot be in the past");
+  if (!isUpdate && endOnly && endOnly < today) errors.push("End date cannot be in the past");
+  if (startOnly && endOnly && endOnly < startOnly) errors.push("End date must be on or after the start date");
   if (body.numberOfLicenses != null && (!Number.isInteger(Number(body.numberOfLicenses)) || Number(body.numberOfLicenses) < 1)) errors.push("Number of licenses must be a positive whole number");
   if (requireFields && !body.startDate) errors.push("Start date is required");
   if (requireFields && !body.endDate) errors.push("End date is required");
@@ -199,14 +212,19 @@ exports.getOrganization = asyncHandler(async (req, res) => {
 exports.updateOrganization = asyncHandler(async (req, res) => {
   const company = await Company.findByPk(req.params.id);
   if (!company || company.status === "deleted") return res.status(404).json({ message: "Organization not found" });
+
+  const toDateOnly = (d) => (d ? String(d).slice(0, 10) : null);
   let validationError = organizationValidation(req.body, { isUpdate: true });
   if (!validationError && (Object.prototype.hasOwnProperty.call(req.body, "startDate") || Object.prototype.hasOwnProperty.call(req.body, "endDate"))) {
-    const nextStart = req.body.startDate || company.startDate;
-    const nextEnd = req.body.endDate || company.endDate;
+    const nextStart = toDateOnly(req.body.startDate || company.startDate);
+    const nextEnd = toDateOnly(req.body.endDate || company.endDate);
     if (nextStart && nextEnd && nextEnd < nextStart) validationError = "End date must be on or after the start date";
   }
   if (validationError) return res.status(400).json({ message: validationError });
   const updates = pick(req.body, editableCompanyFields);
+  if (updates.startDate) updates.startDate = toDateOnly(updates.startDate);
+  if (updates.endDate) updates.endDate = toDateOnly(updates.endDate);
+
   const newLogo = publicPath("organizations", req.file);
   const oldLogoPublicId = company.logoPublicId || cloudinaryService.extractPublicId(company.logo);
   if (newLogo) {
@@ -220,7 +238,7 @@ exports.updateOrganization = asyncHandler(async (req, res) => {
     if (duplicateOrg) return res.status(409).json({ message: "An organization with this organization ID already exists" });
   }
   if (Object.prototype.hasOwnProperty.call(updates, "numberOfLicenses")) {
-    updates.numberOfLicenses = Number(updates.numberOfLicenses);
+    updates.numberOfLicenses = parseInt(updates.numberOfLicenses, 10);
     const currentLicense = await licenseCapacity(company.id);
     if (updates.numberOfLicenses < currentLicense.usedLicenses) return res.status(409).json({ message: `This organization currently uses ${currentLicense.usedLicenses} licenses. Remove users or dealer allocations before reducing the total.` });
   }
@@ -228,7 +246,10 @@ exports.updateOrganization = asyncHandler(async (req, res) => {
   const admin = await adminFor(company.id);
   const adminUpdates = {};
   if (req.body.adminName != null) adminUpdates.name = String(req.body.adminName).trim();
-  if (req.body.adminPhone != null) adminUpdates.phone = String(req.body.adminPhone).trim();
+  if (req.body.adminPhone != null) {
+    const digits = String(req.body.adminPhone).replace(/\D/g, "");
+    adminUpdates.phone = digits.length >= 7 ? digits.slice(0, 10) : null;
+  }
   if (req.body.adminEmail != null) {
     const email = String(req.body.adminEmail).trim().toLowerCase();
     const duplicate = await User.findOne({ where: { email, id: { [Op.ne]: admin?.id || 0 } } });

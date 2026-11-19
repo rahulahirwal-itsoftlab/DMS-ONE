@@ -29,10 +29,11 @@ const { publicPath } = require("../middleware/upload");
 const cloudinaryService = require("../services/cloudinaryService");
 const cacheService = require("../services/cacheService");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
-const { awardCreditCoinsForOrder, creditStatsForCompany, getOrCreateWallet, dateWhere } = require("../utils/credit");
+const { awardCreditCoinsForOrder, awardCreditCoinsForPayment, creditStatsForCompany, getOrCreateWallet, dateWhere } = require("../utils/credit");
 const { licenseCapacity, dealerLicenseCapacity, licenseLimitError } = require("../utils/licenseService");
 const { hardDeleteUser } = require("../utils/userCleanup");
 const { licenseSystemEnabled } = require("../utils/featureFlags");
+const { broadcastChatMessage } = require("../services/websocketService");
 
 const companyScope = (req) => ({ companyId: req.user.companyId });
 
@@ -68,7 +69,11 @@ function generateVariantSuffix(row) {
 }
 
 function normalizeVariantRows(rows, fallbackQuantity = 0) {
-  const source = rows.length ? rows : [{ variantName: "Standard", colorName: "Default", stockQuantity: Number(fallbackQuantity || 0), priceOverride: null }];
+  const fallback = Number(fallbackQuantity || 0);
+  let source = rows.length ? rows : [{ variantName: "Standard", colorName: "Default", stockQuantity: fallback, priceOverride: null }];
+  if (source.length === 1 && Number(source[0].stockQuantity || 0) === 0 && fallback > 0) {
+    source = [{ ...source[0], stockQuantity: fallback }];
+  }
   const seen = new Set();
   return source.map((row) => {
     const variantName = String(row.variantName || "Standard").trim();
@@ -428,6 +433,12 @@ exports.createDealer = asyncHandler(async (req, res) => {
   const { password = "dealer123", allocatedLicenses: requestedAllocation = 1, ...body } = req.body;
   const allocatedLicenses = Number(requestedAllocation);
   if (!body.dealerName || !body.ownerName || !body.email) return res.status(400).json({ message: "Dealer name, owner name and email are required" });
+  if (body.pincode && !/^\d{6}$/.test(String(body.pincode).trim())) {
+    return res.status(400).json({ message: "Pincode must be exactly 6 digits" });
+  }
+  if (body.phone && !/^\d{10}$/.test(String(body.phone).trim())) {
+    return res.status(400).json({ message: "Phone must be exactly 10 digits" });
+  }
   if (!Number.isInteger(allocatedLicenses) || allocatedLicenses < 1) return res.status(400).json({ message: "A dealer requires at least 1 allocated license" });
   const existingUser = await User.findOne({ where: { email: body.email } });
   if (existingUser) return res.status(409).json({ message: "A user with this email already exists" });
@@ -566,6 +577,12 @@ exports.getDealer = asyncHandler(async (req, res) => {
 exports.updateDealer = asyncHandler(async (req, res) => {
   const dealer = await Dealer.findOne({ where: { id: req.params.id, ...companyScope(req) } });
   if (!dealer) return res.status(404).json({ message: "Dealer not found" });
+  if (req.body.pincode && !/^\d{6}$/.test(String(req.body.pincode).trim())) {
+    return res.status(400).json({ message: "Pincode must be exactly 6 digits" });
+  }
+  if (req.body.phone && !/^\d{10}$/.test(String(req.body.phone).trim())) {
+    return res.status(400).json({ message: "Phone must be exactly 10 digits" });
+  }
   const fields = ["dealerName", "ownerName", "email", "phone", "area", "city", "state", "pincode", "address", "status"];
   const updates = fields.reduce((result, field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) result[field] = req.body[field] === "" ? null : req.body[field];
@@ -755,6 +772,16 @@ exports.createProduct = asyncHandler(async (req, res) => {
   const variants = JSON.parse(req.body.variants || "[]").filter((row) => row.variantName || row.colorName);
   const creditCoins = Math.max(0, Number(req.body.creditCoins || 0));
   if (variants.some((row) => Number(row.stockQuantity || 0) < 0)) return res.status(400).json({ message: "Stock quantity cannot be negative" });
+
+  const openingQty = Math.max(0, Number(req.body.quantity || 0));
+  const variantRows = normalizeVariantRows(variants, openingQty);
+  assertNoDuplicateVariantSkuSuffix(variantRows);
+  const inventoryQuantity = Math.max(openingQty, variantRows.reduce((total, row) => total + Number(row.stockQuantity || 0), 0));
+
+  if (inventoryQuantity <= 0) {
+    return res.status(400).json({ message: "Opening quantity / available stock must be greater than zero." });
+  }
+
   const result = await Product.sequelize.transaction(async (transaction) => {
     const company = await Company.findByPk(req.user.companyId, { transaction });
     const sku = await generateProductSku({
@@ -773,9 +800,6 @@ exports.createProduct = asyncHandler(async (req, res) => {
       imagePublicId,
       companyId: req.user.companyId
     }, { transaction });
-    const variantRows = normalizeVariantRows(variants, req.body.quantity);
-    assertNoDuplicateVariantSkuSuffix(variantRows);
-    const inventoryQuantity = variantRows.reduce((total, row) => total + Number(row.stockQuantity || 0), 0);
     const inventory = await CompanyInventory.create({
       companyId: req.user.companyId,
       productId: product.id,
@@ -1068,121 +1092,226 @@ exports.approveWithSchedule = asyncHandler(async (req, res) => {
       if (!inventory || inventory.quantity < item.quantity) return res.status(400).json({ message: "Insufficient stock" });
     }
   }
-  for (const item of order.items) {
-    if (item.productVariantId) {
-      await ProductVariant.decrement("stockQuantity", { by: item.quantity, where: { id: item.productVariantId, companyId: order.companyId, productId: item.productId } });
-      await CompanyInventory.decrement("quantity", { by: item.quantity, where: { companyId: order.companyId, productId: item.productId } });
-    } else {
-      await CompanyInventory.decrement("quantity", { by: item.quantity, where: { companyId: order.companyId, productId: item.productId } });
-    }
-  }
 
+  // Stock deduction is deferred to final delivery as requested by new workflow
   await order.update({
-    status: "approved",
+    status: "payment",
     packingDate,
     shippingDate,
     outForDeliveryDate,
     deliveredDate,
     approvedAt: new Date(),
     approvedBy: req.user.id,
-    currentDeliveryStep: "approved",
-    deliveryProgress: progressForStatus("approved")
+    currentDeliveryStep: "payment",
+    deliveryProgress: progressForStatus("payment")
   });
 
-  await DeliveryTracking.bulkCreate([
-    { orderId: order.id, status: "approved", message: "Order Approved", updatedBy: req.user.id },
-    { orderId: order.id, status: "packing", message: `Packing Started - ${packingDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "shipping", message: `Shipping Started - ${shippingDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "out_for_delivery", message: `Out For Delivery - ${outForDeliveryDate}`, updatedBy: req.user.id },
-    { orderId: order.id, status: "delivered", message: `Delivered - ${deliveredDate}`, updatedBy: req.user.id }
-  ]);
-
-  const approvalText = `Your order #${order.orderNumber} has been approved. Your expected delivery date is ${deliveredDate}.`;
-  const scheduleRows = [
-    { messageType: "approval", scheduledDate: new Date().toISOString().slice(0, 10), messageText: approvalText, isSent: true, sentAt: new Date() },
-    { messageType: "packing", scheduledDate: packingDate, messageText: `Your order #${order.orderNumber} packing has started today.` },
-    { messageType: "shipping", scheduledDate: shippingDate, messageText: `Your order #${order.orderNumber} has been shipped today.` },
-    { messageType: "out_for_delivery", scheduledDate: outForDeliveryDate, messageText: `Your order #${order.orderNumber} is out for delivery today.` },
-    { messageType: "delivered", scheduledDate: deliveredDate, messageText: `Your order #${order.orderNumber} is scheduled to be delivered today.` }
-  ].map((row) => ({
+  await DeliveryTracking.create({
     orderId: order.id,
-    dealerId: order.dealerId,
-    companyId: order.companyId,
-    senderId: req.user.id,
-    isSent: false,
-    ...row
-  }));
-  await OrderScheduledMessage.bulkCreate(scheduleRows, { ignoreDuplicates: true });
+    status: "payment",
+    message: "Order Accepted - Payment request sent to dealer Sales & Finance Manager",
+    updatedBy: req.user.id
+  });
+
+  const approvalText = `Your order #${order.orderNumber} has been accepted by organization. A payment request for Rs ${order.totalAmount} has been sent to your Sales and Finance Manager. Please complete payment to proceed with packing.`;
   await Message.findOrCreate({
     where: { companyId: order.companyId, dealerId: order.dealerId, orderNumber: order.orderNumber, messageType: "system_order_update", message: approvalText },
     defaults: {
       senderId: req.user.id,
       receiverId: null,
       conversationId: `${order.companyId}-${order.dealerId}`,
-      title: "Order update",
+      title: "Order accepted - Payment required",
       message: approvalText,
       isRead: false
     }
   });
+
   await createInvoiceForApprovedOrder(await Order.findByPk(order.id, { include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }), req.user.id);
 
   res.json(await Order.findByPk(order.id, { include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }, { model: DeliveryTracking, as: "tracking" }, { model: OrderScheduledMessage, as: "scheduledMessages" }] }));
 });
 
+exports.confirmPayment = asyncHandler(async (req, res) => {
+  const paymentId = req.params.paymentId || req.params.id;
+  const payment = await Payment.findOne({
+    where: { id: paymentId, ...companyScope(req) },
+    include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer]
+  });
+  if (!payment) return res.status(404).json({ message: "Payment record not found" });
+
+  if (payment.paymentStatus === "pending") {
+    return res.status(400).json({ message: "Cannot confirm payment before Dealer Sales & Finance Manager selects mode of payment and submits payment details." });
+  }
+  if (payment.paymentStatus === "paid") {
+    return res.status(400).json({ message: "This payment has already been confirmed." });
+  }
+
+  await payment.update({
+    paymentStatus: "paid",
+    paidAt: payment.paidAt || new Date(),
+    approvedBy: req.user.id
+  });
+
+  let order = payment.Order;
+  if (!order && payment.orderId) {
+    order = await Order.findByPk(payment.orderId, {
+      include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }]
+    });
+  }
+
+  if (order && (order.status === "payment" || order.status === "approved" || order.status === "pending")) {
+    await order.update({
+      status: "packing",
+      currentDeliveryStep: "packing",
+      deliveryProgress: progressForStatus("packing")
+    });
+
+    await DeliveryTracking.create({
+      orderId: order.id,
+      status: "packing",
+      message: "Payment confirmed by Organization Finance Manager. Order moved to packing.",
+      updatedBy: req.user.id
+    });
+
+    await Message.create({
+      companyId: order.companyId,
+      senderId: req.user.id,
+      dealerId: order.dealerId,
+      conversationId: `${order.companyId}-${order.dealerId}`,
+      title: "Payment confirmed",
+      message: `Payment of Rs ${payment.amount} for order #${order.orderNumber} has been verified by Finance Manager. Your order is now being packed.`,
+      messageType: "system_finance",
+      orderNumber: order.orderNumber,
+      isRead: false
+    });
+  }
+
+  if (payment.orderId) await awardCreditCoinsForPayment(payment.id);
+
+  res.json({
+    message: "Payment confirmed successfully. Order moved to packing.",
+    payment: await Payment.findByPk(payment.id, {
+      include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer]
+    })
+  });
+});
+
 exports.updateOrderStatus = asyncHandler(async (req, res) => {
-  const { status, rejectionReason, deliveryDate } = req.body;
+  const { status, rejectionReason, deliveryDate, packingDate, shippingDate, outForDeliveryDate, deliveredDate } = req.body;
   const orderId = req.params.id || req.params.orderId;
   const order = await Order.findOne({ where: { id: orderId, ...companyScope(req) }, include: [{ model: OrderItem, as: "items" }] });
   if (!order) return res.status(404).json({ message: "Order not found" });
 
   if (status === "approved" && order.status === "pending") {
-    return res.status(400).json({ message: "Use approve-with-schedule and provide all delivery dates" });
+    return res.status(400).json({ message: "Use accept order to generate payment request" });
   }
-  const nextStatus = { approved: "packing", packing: "shipping", shipping: "out_for_delivery", out_for_delivery: "delivered" };
-  if (["packing", "shipping", "out_for_delivery", "delivered"].includes(status) && nextStatus[order.status] !== status) {
+
+  const nextStatus = {
+    payment: "packing",
+    approved: "packing",
+    packing: "shipping",
+    shipping: "out_for_delivery",
+    out_for_delivery: "delivered"
+  };
+
+  if (["packing", "shipping", "out_for_delivery", "delivered"].includes(status) && nextStatus[order.status] !== status && order.status !== status) {
     return res.status(400).json({ message: `Invalid delivery transition from ${order.status} to ${status}` });
   }
   if (order.status === "delivered") return res.status(400).json({ message: "Delivered orders cannot be changed" });
 
+  const updates = {};
+  if (status) updates.status = status;
+  if (rejectionReason) updates.rejectionReason = rejectionReason;
+  if (deliveryDate) updates.deliveryDate = deliveryDate;
+  if (packingDate) updates.packingDate = packingDate;
+  if (shippingDate) updates.shippingDate = shippingDate;
+  if (outForDeliveryDate) updates.outForDeliveryDate = outForDeliveryDate;
+  if (deliveredDate) updates.deliveredDate = deliveredDate;
+
+  // When order is delivered: automatically reduce from organization inventory and add to dealer inventory!
   if (status === "delivered" && !order.inventoryAdded) {
     for (const item of order.items) {
+      // 1. Decrement from company total inventory
+      await CompanyInventory.decrement("quantity", {
+        by: item.quantity,
+        where: { companyId: order.companyId, productId: item.productId }
+      });
+      if (item.productVariantId) {
+        await ProductVariant.decrement("stockQuantity", {
+          by: item.quantity,
+          where: { id: item.productVariantId, companyId: order.companyId, productId: item.productId }
+        });
+      }
+
+      // 2. Increment to dealer inventory
       const [dealerInventory] = await DealerInventory.findOrCreate({
-        where: { companyId: order.companyId, dealerId: order.dealerId, productId: item.productId, productVariantId: item.productVariantId || null },
-        defaults: { quantity: 0, lowStockLimit: 5, variantName: item.variantName, colorName: item.colorName }
+        where: {
+          companyId: order.companyId,
+          dealerId: order.dealerId,
+          productId: item.productId,
+          productVariantId: item.productVariantId || null
+        },
+        defaults: {
+          quantity: 0,
+          lowStockLimit: 5,
+          variantName: item.variantName,
+          colorName: item.colorName
+        }
       });
       await dealerInventory.increment("quantity", { by: item.quantity });
     }
-    await order.update({ inventoryAdded: true, deliveredAt: new Date() });
+    updates.inventoryAdded = true;
+    updates.deliveredAt = new Date();
   }
 
-  await order.update({ status, rejectionReason, deliveryDate });
-  await order.update({ currentDeliveryStep: activeDeliveryStep(status), deliveryProgress: progressForStatus(status) });
-  await DeliveryTracking.create({ orderId: order.id, status, message: req.body.message || status.replaceAll("_", " "), updatedBy: req.user.id });
-  await Message.create({
-    companyId: order.companyId,
-    senderId: req.user.id,
-    receiverId: null,
-    dealerId: order.dealerId,
-    conversationId: `${order.companyId}-${order.dealerId}`,
-    title: "Delivery update",
-    message: status === "delivered" ? `Your order #${order.orderNumber} has been delivered and added to your inventory.` : `Your order #${order.orderNumber} is now ${status.replaceAll("_", " ")}.`,
-    messageType: "system_delivery",
-    orderNumber: order.orderNumber,
-    isRead: false
-  });
+  if (status) {
+    updates.currentDeliveryStep = activeDeliveryStep(status);
+    updates.deliveryProgress = progressForStatus(status);
+  }
+
+  await order.update(updates);
+
+  if (status) {
+    await DeliveryTracking.create({
+      orderId: order.id,
+      status,
+      message: req.body.message || status.replaceAll("_", " "),
+      updatedBy: req.user.id
+    });
+    await Message.create({
+      companyId: order.companyId,
+      senderId: req.user.id,
+      receiverId: null,
+      dealerId: order.dealerId,
+      conversationId: `${order.companyId}-${order.dealerId}`,
+      title: "Delivery update",
+      message: status === "delivered"
+        ? `Your order #${order.orderNumber} has been delivered. Product quantity has been added to your inventory.`
+        : `Your order #${order.orderNumber} is now ${status.replaceAll("_", " ")}.`,
+      messageType: "system_delivery",
+      orderNumber: order.orderNumber,
+      isRead: false
+    });
+  }
+
   if (status === "delivered") await awardCreditCoinsForOrder(order.id);
-  res.json(order);
+  res.json(await Order.findByPk(order.id, {
+    include: [
+      { model: OrderItem, as: "items", include: [Product, ProductVariant] },
+      { model: DeliveryTracking, as: "tracking" }
+    ]
+  }));
 });
 
 exports.delivery = asyncHandler(async (req, res) => {
   const where = companyScope(req);
   if (req.query.status) where.status = req.query.status;
   const orders = await Order.findAll({
-    where: { ...where, status: { [Op.notIn]: ["pending", "rejected", "cancelled"] } },
+    where: { ...where, status: { [Op.in]: ["packing", "shipping", "out_for_delivery", "delivered"] } },
     include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }, Dealer, { model: DeliveryTracking, as: "tracking" }, { model: OrderScheduledMessage, as: "scheduledMessages" }],
     order: [["updatedAt", "DESC"]]
   });
-  const priority = { approved: 1, packing: 2, shipping: 3, out_for_delivery: 4, delivered: 9 };
+  const priority = { packing: 1, shipping: 2, out_for_delivery: 3, delivered: 9 };
   res.json(orders.map((order) => ({
     ...order.toJSON(),
     progressPercentage: progressForStatus(order.status),
@@ -1240,9 +1369,14 @@ exports.financeSummary = asyncHandler(async (req, res) => {
     include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer],
     order: [["createdAt", "DESC"]]
   })).map(withFinanceMeta).sort((a, b) => {
-    if (a.paymentStatus === "pending" && b.paymentStatus === "pending") return b.daysUnpaid - a.daysUnpaid || new Date(b.createdAt) - new Date(a.createdAt);
-    if (a.paymentStatus === "pending") return -1;
-    if (b.paymentStatus === "pending") return 1;
+    const isUnsettled = (s) => s === "under_review" || s === "pending";
+    if (isUnsettled(a.paymentStatus) && isUnsettled(b.paymentStatus)) {
+      if (a.paymentStatus === "under_review" && b.paymentStatus !== "under_review") return -1;
+      if (b.paymentStatus === "under_review" && a.paymentStatus !== "under_review") return 1;
+      return b.daysUnpaid - a.daysUnpaid || new Date(b.createdAt) - new Date(a.createdAt);
+    }
+    if (isUnsettled(a.paymentStatus)) return -1;
+    if (isUnsettled(b.paymentStatus)) return 1;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
   const sum = (rows) => rows.reduce((total, item) => total + Number(item.amount || 0), 0);
@@ -1250,10 +1384,11 @@ exports.financeSummary = asyncHandler(async (req, res) => {
     payments,
     stats: {
       pendingPayments: payments.filter((p) => p.paymentStatus === "pending").length,
+      underReviewPayments: payments.filter((p) => p.paymentStatus === "under_review").length,
       paidPayments: payments.filter((p) => p.paymentStatus === "paid").length,
       cashPayments: payments.filter((p) => String(p.paymentMethod || "").toLowerCase() === "cash").length,
       onlinePayments: payments.filter((p) => ["online", "upi", "card", "net_banking", "bank_transfer"].includes(String(p.paymentMethod || "").toLowerCase())).length,
-      totalPendingAmount: sum(payments.filter((p) => p.paymentStatus === "pending")),
+      totalPendingAmount: sum(payments.filter((p) => p.paymentStatus === "pending" || p.paymentStatus === "under_review")),
       totalPaidAmount: sum(payments.filter((p) => p.paymentStatus === "paid"))
     }
   });
@@ -1268,7 +1403,12 @@ exports.messages = asyncHandler(async (req, res) => {
   if (req.method === "POST") {
     const dealerId = req.body.dealerId || null;
     const conversationId = dealerId ? `${req.user.companyId}-${dealerId}` : `${req.user.companyId}-all`;
-    return res.status(201).json(await Message.create({ ...req.body, dealerId, conversationId, companyId: req.user.companyId, senderId: req.user.id }));
+    const message = await Message.create({ ...req.body, dealerId, conversationId, companyId: req.user.companyId, senderId: req.user.id });
+    const fullMessage = await Message.findByPk(message.id, {
+      include: [{ model: User, as: "sender", attributes: ["id", "name", "role"] }]
+    });
+    broadcastChatMessage(fullMessage || message);
+    return res.status(201).json(fullMessage || message);
   }
   res.json(await Message.findAll({ where: companyScope(req), order: [["createdAt", "DESC"]] }));
 });

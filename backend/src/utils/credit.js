@@ -26,8 +26,7 @@ async function awardCreditCoinsForOrder(orderId) {
   return sequelize.transaction(async (transaction) => {
     const order = await Order.findByPk(orderId, {
       include: [{ model: OrderItem, as: "items", include: [Product] }],
-      transaction,
-      lock: transaction.LOCK.UPDATE
+      transaction
     });
     if (!order || order.creditAwarded || order.status !== "delivered") return { awarded: false, coins: 0 };
 
@@ -109,8 +108,7 @@ async function awardCreditCoinsForPayment(paymentId) {
   return sequelize.transaction(async (transaction) => {
     const payment = await Payment.findByPk(paymentId, {
       include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product] }] }],
-      transaction,
-      lock: transaction.LOCK.UPDATE
+      transaction
     });
     if (!payment || payment.paymentStatus !== "paid" || payment.creditAwarded) return { awarded: false, coins: 0 };
     const order = payment.Order;

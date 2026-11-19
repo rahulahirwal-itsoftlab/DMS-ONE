@@ -35,6 +35,9 @@ const statusTones = {
   out_for_delivery: "border-amber-200 bg-amber-50 text-amber-700",
   packing: "border-sky-200 bg-sky-50 text-sky-700",
   paid: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  payment: "border-purple-200 bg-purple-50 text-purple-700",
+  under_review: "border-amber-300 bg-amber-50 text-amber-800",
+  payment_done: "border-emerald-200 bg-emerald-50 text-emerald-700",
   pending: "border-amber-200 bg-amber-50 text-amber-700",
   requested: "border-yellow-200 bg-yellow-50 text-yellow-700",
   manager_approved: "border-blue-200 bg-blue-50 text-blue-700",
@@ -461,20 +464,21 @@ export function FileUploadPreview({ label = "Upload file", preview, accept, onCh
 
 export function DeliveryTimeline({ order }) {
   const steps = [
+    ["payment", "Payment", order?.approvedAt ? new Date(order.approvedAt).toLocaleDateString() : null],
     ["packing", "Packing", order?.packingDate],
     ["shipping", "Shipping", order?.shippingDate],
     ["out_for_delivery", "Out For Delivery", order?.outForDeliveryDate],
     ["delivered", "Delivered", order?.deliveredDate]
   ];
-  const status = order?.status === "approved" ? "packing" : order?.status;
+  const status = order?.status === "approved" ? "payment" : order?.status;
   const activeIndex = Math.max(steps.findIndex(([key]) => key === status), 0);
-  const progress = order?.progressPercentage ?? order?.deliveryProgress ?? (order?.status === "delivered" ? 100 : activeIndex * 33);
+  const progress = order?.progressPercentage ?? order?.deliveryProgress ?? (order?.status === "delivered" ? 100 : activeIndex * 25);
   return (
     <div className="mt-4">
       <div className="h-2 overflow-hidden rounded-full bg-slate-100">
         <div className="h-full rounded-full bg-indigo-600 transition-all" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
       </div>
-      <div className="mt-3 grid grid-cols-4 gap-2">
+      <div className="mt-3 grid grid-cols-5 gap-2">
         {steps.map(([key, label, date], index) => {
           const complete = order?.status === "delivered" || index < activeIndex;
           const active = index === activeIndex && order?.status !== "delivered";
@@ -502,9 +506,9 @@ export function ChatWindow({ messages = [], mine, value, onChange, onSend, place
           const highlighted = message.messageType === "stock_request";
           return (
             <div key={message.id} className={clsx("flex", isMine ? "justify-end" : "justify-start")}>
-              <div className={clsx("max-w-[80%] rounded-md px-3 py-2 text-sm shadow-sm", isMine ? "bg-indigo-600 text-white" : "border border-slate-200 bg-white text-slate-700", highlighted && "ring-2 ring-amber-200")}>
+              <div className={clsx("max-w-[80%] rounded-md px-3 py-2 text-sm shadow-sm break-words break-all whitespace-pre-wrap overflow-hidden", isMine ? "bg-indigo-600 text-white" : "border border-slate-200 bg-white text-slate-700", highlighted && "ring-2 ring-amber-200")}>
                 {message.title && <p className={clsx("mb-1 text-xs font-bold", isMine ? "text-indigo-100" : "text-slate-500")}>{message.title}</p>}
-                <p>{message.message}</p>
+                <p className="break-words break-all whitespace-pre-wrap overflow-hidden leading-relaxed">{message.message}</p>
                 {highlighted && <p className="mt-1 text-[11px] opacity-80">Requested: {message.requestedQuantity}, available: {message.availableStock}</p>}
                 <p className="mt-1 text-[11px] opacity-75">{message.createdAt ? new Date(message.createdAt).toLocaleString() : ""}</p>
               </div>

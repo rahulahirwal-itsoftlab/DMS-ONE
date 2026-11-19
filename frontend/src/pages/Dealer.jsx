@@ -1,5 +1,6 @@
-import { Component, useEffect, useMemo, useState } from "react";
-import { Gift, Star, Eye, EyeOff, X, Pencil, RefreshCw, Trash2, Copy, Check } from "lucide-react";
+import { Component, useEffect, useMemo, useState, useRef } from "react";
+import { useChatSocket } from "../utils/useSocket";
+import { Gift, Star, Eye, EyeOff, X, Pencil, RefreshCw, Trash2, Copy, Check, Calendar, Filter, RotateCcw, TrendingUp, Clock } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Layout from "../components/Layout";
 import { api, fileUrl } from "../api/client";
@@ -47,12 +48,14 @@ function CopySku({ value }) {
 }
 
 function CompactSku({ value }) {
-  const sku = String(value || "-");
-  const preview = sku.length > 14 ? `${sku.slice(0, 7)}…${sku.slice(-4)}` : sku;
+  const sku = String(value || "").trim();
+  if (!sku || sku === "-") return <span className="text-slate-400 font-mono text-xs">-</span>;
+  const halfLen = Math.max(4, Math.floor(sku.length / 2));
+  const preview = sku.length > 7 ? `${sku.slice(0, halfLen)}…` : sku;
   return (
-    <span className="inline-flex max-w-full items-center gap-1 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku}`}>
+    <span className="inline-flex max-w-full items-center gap-1 rounded bg-indigo-50/80 border border-indigo-100 px-1.5 py-0.5 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku} (Click icon to copy)`}>
       <span className="truncate">{preview}</span>
-      <CopySku value={value} />
+      <CopySku value={sku} />
     </span>
   );
 }
@@ -238,11 +241,15 @@ function DealerDashboard() {
     load(true);
   };
 
-  const pay = async (paymentId, paymentMethod) => {
-    if (paymentMethod === "online") alert("Dummy online payment approved. A fake transaction id will be generated.");
-    if (paymentMethod === "cash" && !confirm("Confirm cash payment done?")) return;
-    await api.post(`/dealer/finance/pay/${paymentId}`, { paymentMethod });
-    load(true);
+  const pay = async (paymentId, payload) => {
+    try {
+      const body = typeof payload === "string" ? { paymentMethod: payload } : payload;
+      await api.post(`/dealer/finance/pay/${paymentId}`, body);
+      alert("Payment request sent successfully! Mode of payment submitted to Organization Finance Manager for confirmation.");
+      load(true);
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to submit payment");
+    }
   };
 
   const cancelOrder = async (order) => {
@@ -255,18 +262,49 @@ function DealerDashboard() {
     }
   };
 
+  useChatSocket((payload) => {
+    if (payload?.type === "chat_message" && payload?.data) {
+      setData((curr) => {
+        const existing = curr.messages_conversation || [];
+        if (existing.some((m) => m.id === payload.data.id)) return curr;
+        return { ...curr, messages_conversation: [...existing, payload.data] };
+      });
+    }
+  });
+
   const sendReply = async (e) => {
     e.preventDefault();
-    await api.post("/dealer/messages/reply", { message: reply });
+    if (!reply.trim()) return;
+    const msgText = reply.trim();
     setReply("");
-    load(true);
+    try {
+      const { data: newMsg } = await api.post("/dealer/messages/reply", { message: msgText });
+      setData((curr) => {
+        const existing = curr.messages_conversation || [];
+        if (existing.some((m) => m.id === newMsg.id)) return curr;
+        return { ...curr, messages_conversation: [...existing, newMsg] };
+      });
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to send message");
+    }
   };
 
+  const [sendingReport, setSendingReport] = useState(false);
   const sendReport = async (e) => {
     e.preventDefault();
-    await api.post("/dealer/reports", report);
-    setReport({ title: "", type: "inventory", description: "" });
-    alert("Report sent");
+    if (!report.title.trim() || !report.description.trim()) {
+      return alert("Title and description are required");
+    }
+    setSendingReport(true);
+    try {
+      await api.post("/dealer/reports", report);
+      setReport({ title: "", type: "inventory", description: "" });
+      alert("Report sent successfully");
+    } catch (err) {
+      alert(err.response?.data?.message || "Failed to send report");
+    } finally {
+      setSendingReport(false);
+    }
   };
 
   const updateLowStockLimit = async (id, lowStockLimit) => {
@@ -349,7 +387,8 @@ function DealerDashboard() {
   const paymentChart = Object.entries(finance.reduce((acc, payment) => ({ ...acc, [payment.paymentStatus]: (acc[payment.paymentStatus] || 0) + 1 }), {})).map(([status, count]) => ({ status, count }));
 
   const guarded = (id, node) => visibleTabIds.includes(id) ? node : <AccessDenied />;
-  const ceoReadOnly = dealerManagersExist && ["DEALER", "DEALER_CEO"].includes(user?.role);
+  const isDealerCeo = ["DEALER", "DEALER_CEO"].includes(user?.role);
+  const ceoReadOnly = dealerManagersExist && isDealerCeo;
 
   return (
     <Layout title="Dealer Dashboard" subtitle="Orders, inventory, finance and updates" tabs={visibleTabs} activeTab={activeTab} onTab={setActiveTab} unreadUpdates={data.internalUpdates?.unreadCount || 0}>
@@ -363,13 +402,13 @@ function DealerDashboard() {
       {activeTab === "dashboard" && <div className="space-y-6"><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{dashboardCards.map(([label, value]) => <Card key={label} label={label} value={value} />)}</div><div className="grid gap-6 xl:grid-cols-2"><ChartCard title="Order status chart"><div className="h-72"><ResponsiveContainer><PieChart><Pie data={orderStatusChart} dataKey="count" nameKey="status" outerRadius={90} label>{orderStatusChart.map((entry, index) => <Cell key={entry.status} fill={["#4F46E5", "#0EA5E9", "#10B981", "#F59E0B", "#F43F5E"][index % 5]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></ChartCard><ChartCard title="Stock chart"><div className="h-72"><ResponsiveContainer><BarChart data={stockChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="product" /><YAxis /><Tooltip /><Bar dataKey="quantity" fill="#0EA5E9" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div></ChartCard><ChartCard title="Payment status chart"><div className="h-72"><ResponsiveContainer><PieChart><Pie data={paymentChart} dataKey="count" nameKey="status" outerRadius={90} label>{paymentChart.map((entry, index) => <Cell key={entry.status} fill={["#F59E0B", "#10B981", "#F43F5E", "#64748B"][index % 4]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div></ChartCard><ChartCard title="Purchase amount"><div className="grid h-72 place-items-center rounded-md bg-slate-50 text-center"><div><p className="text-sm font-semibold text-slate-500">Total purchase value</p><p className="mt-2 text-4xl font-semibold text-slate-950">{formatMoney(dashboard.totalPurchaseAmount)}</p></div></div></ChartCard></div></div>}
       {activeTab === "managers" && guarded("managers", <DealerManagers />)}
       {activeTab === "stock" && (
-        guarded("stock", <Section title="Company available stock" actions={ceoReadOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={placeOrder}>Place Order</Button>}>
-          {orderWarning && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700 animate-pulse">{orderWarning}</div>}
-          {stock.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{stock.map((stock) => <StockCard key={stock.id} stock={stock} quantity={orderItems[stock.productId] || ""} selection={stockSelections[stock.productId]} setSelection={(value) => setStockSelections({ ...stockSelections, [stock.productId]: value })} setQuantity={(value) => setOrderItems({ ...orderItems, [stock.productId]: value })} requestMore={() => setStockRequest({ productId: stock.productId, requestedQuantity: Number(orderItems[stock.productId] || 0), availableStock: stock.quantity, message: `I want more quantity of ${productNameWithSku(stock.Product)}. Available stock is ${stock.quantity}, but I need ${Number(orderItems[stock.productId] || 0)}. Please increase product stock.` })} />)}</div> : <Empty />}
+        guarded("stock", <Section title="Company available stock" actions={isDealerCeo ? <span className="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">Catalog View Only</span> : (ceoReadOnly ? <span className="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button onClick={placeOrder}>Place Order</Button>)}>
+          {!isDealerCeo && orderWarning && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700 animate-pulse">{orderWarning}</div>}
+          {stock.length ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{stock.map((stock) => <StockCard key={stock.id} stock={stock} quantity={orderItems[stock.productId] || ""} selection={stockSelections[stock.productId]} setSelection={(value) => setStockSelections({ ...stockSelections, [stock.productId]: value })} setQuantity={(value) => setOrderItems({ ...orderItems, [stock.productId]: value })} readOnly={isDealerCeo || ceoReadOnly} requestMore={() => setStockRequest({ productId: stock.productId, requestedQuantity: Number(orderItems[stock.productId] || 0), availableStock: stock.quantity, message: `I want more quantity of ${productNameWithSku(stock.Product)}. Available stock is ${stock.quantity}, but I need ${Number(orderItems[stock.productId] || 0)}. Please increase product stock.` })} />)}</div> : <Empty />}
         </Section>)
       )}
       {stockRequest && <StockRequestModal request={stockRequest} setRequest={setStockRequest} onSubmit={sendStockRequest} />}
-      {activeTab === "orders" && guarded("orders", <Orders rows={orders} filter={orderFilter} setFilter={setOrderFilter} search={orderSearch} setSearch={setOrderSearch} onCancel={cancelOrder} />)}
+      {activeTab === "orders" && guarded("orders", <Orders rows={orders} filter={orderFilter} setFilter={setOrderFilter} search={orderSearch} setSearch={setOrderSearch} onCancel={cancelOrder} onGoToFinance={() => setActiveTab("finance")} />)}
       {activeTab === "delivery" && guarded("delivery", <DeliveryBoard rows={delivery} />)}
       {activeTab === "inventory" && guarded("inventory", <DealerInventory rows={inventory} updateLowStockLimit={updateLowStockLimit} readOnly={ceoReadOnly} />)}
       {activeTab === "dealerStockExchange" && guarded("dealerStockExchange", user?.role === "DEALER_STOCK_DELIVERY_MANAGER" ? <DealerStockExchange /> : <AccessDenied />)}
@@ -380,7 +419,51 @@ function DealerDashboard() {
       {activeTab === "messages" && guarded("messages", <DealerChat messages={messages} reply={reply} setReply={setReply} sendReply={sendReply} />)}
       {activeTab === "teamChat" && guarded("teamChat", <DealerTeamChat />)}
       {activeTab === "internalUpdates" && <InternalUpdates data={data.internalUpdates} filter={internalFilter} setFilter={setInternalFilter} markRead={markUpdateRead} markAll={markAllUpdatesRead} clearRead={clearReadUpdates} />}
-      {activeTab === "reports" && <Section title="Send update/report to admin"><FormGrid onSubmit={sendReport}>{Object.keys(report).map((k) => <TextField key={k} label={k} value={report[k]} onChange={(e) => setReport({ ...report, [k]: e.target.value })} />)}<div className="md:col-span-2"><Button>Send Report</Button></div></FormGrid></Section>}
+      {activeTab === "reports" && (
+        <Section title="Send update/report to admin">
+          <form onSubmit={sendReport} className="space-y-4 max-w-2xl bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
+            <TextField
+              label="Report Title"
+              placeholder="e.g. Weekly inventory update, delivery feedback..."
+              value={report.title}
+              onChange={(e) => setReport({ ...report, title: e.target.value })}
+              required
+            />
+            <label className="block text-sm font-semibold text-slate-700">
+              Report Category / Type
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm font-medium outline-none focus:border-brand focus:ring-2 focus:ring-cyan-100"
+                value={report.type}
+                onChange={(e) => setReport({ ...report, type: e.target.value })}
+              >
+                <option value="inventory">Inventory & Stock Update</option>
+                <option value="orders">Orders & Fulfillment</option>
+                <option value="delivery">Delivery & Logistics Issue</option>
+                <option value="finance">Payment / Finance Query</option>
+                <option value="damaged_stock">Damaged Stock Report</option>
+                <option value="general">General Update / Feedback</option>
+              </select>
+            </label>
+            <label className="block text-sm font-semibold text-slate-700">
+              Report Description
+              <textarea
+                rows={6}
+                className="mt-1 w-full rounded-lg border border-slate-200 p-3 text-sm leading-relaxed outline-none focus:border-brand focus:ring-2 focus:ring-cyan-100 resize-y"
+                placeholder="Write detailed report description, issues faced, or operational feedback here..."
+                value={report.description}
+                onChange={(e) => setReport({ ...report, description: e.target.value })}
+                required
+              />
+            </label>
+            <div className="pt-2">
+              <Button type="submit" disabled={sendingReport}>
+                {sendingReport ? <RefreshCw size={16} className="animate-spin inline mr-1" /> : null}
+                {sendingReport ? "Sending Report..." : "Send Report"}
+              </Button>
+            </div>
+          </form>
+        </Section>
+      )}
     </Layout>
   );
 }
@@ -719,7 +802,7 @@ function DealerTeamChat() {
   );
 }
 
-function StockCard({ stock, quantity, selection, setSelection, setQuantity, requestMore }) {
+function StockCard({ stock, quantity, selection, setSelection, setQuantity, requestMore, readOnly = false }) {
   const variants = stock.Product?.variants || [];
   const variantNames = [...new Set(variants.map((v) => v.variantName))];
   const selectedVariantName = selection?.variantName || variantNames[0] || "";
@@ -827,17 +910,19 @@ function StockCard({ stock, quantity, selection, setSelection, setQuantity, requ
       </div>
 
       {/* Order quantity & actions */}
-      <div className="mt-4 pt-3 border-t border-slate-100">
-        <label className="block">
-          <div className="flex justify-between items-center text-xs">
-            <span className="font-bold text-slate-700">Order Quantity</span>
-            <span className="text-slate-500">Max: {availableQuantity}</span>
-          </div>
-          <input className={`mt-1 w-full rounded-md border px-3 py-1.5 text-sm outline-none transition ${invalid ? "border-red-400 bg-red-50 animate-pulse" : "border-slate-300 focus:border-brand focus:ring-2 focus:ring-cyan-100"}`} type="number" min="1" max={availableQuantity} placeholder="Enter quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        </label>
-        {invalid && <div className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-700">Cannot order more than {availableQuantity} available units.</div>}
-        {invalid && <div className="mt-2"><Button variant="ghost" className="w-full text-xs" onClick={requestMore}>Request More Stock</Button></div>}
-      </div>
+      {!readOnly && (
+        <div className="mt-4 pt-3 border-t border-slate-100">
+          <label className="block">
+            <div className="flex justify-between items-center text-xs">
+              <span className="font-bold text-slate-700">Order Quantity</span>
+              <span className="text-slate-500">Max: {availableQuantity}</span>
+            </div>
+            <input className={`mt-1 w-full rounded-md border px-3 py-1.5 text-sm outline-none transition ${invalid ? "border-red-400 bg-red-50 animate-pulse" : "border-slate-300 focus:border-brand focus:ring-2 focus:ring-cyan-100"}`} type="number" min="1" max={availableQuantity} placeholder="Enter quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+          </label>
+          {invalid && <div className="mt-2 rounded-md bg-red-50 p-2 text-xs font-semibold text-red-700">Cannot order more than {availableQuantity} available units.</div>}
+          {invalid && <div className="mt-2"><Button variant="ghost" className="w-full text-xs" onClick={requestMore}>Request More Stock</Button></div>}
+        </div>
+      )}
     </div>
   );
 }
@@ -936,35 +1021,269 @@ function DealerSales({ inventory = [], sales = [], form, setForm, onSubmit, filt
   const month = today.slice(0, 7);
   const todayTotal = sales.filter((s) => s.saleDate === today).reduce((sum, s) => sum + Number(s.quantitySold || 0), 0);
   const monthTotal = sales.filter((s) => String(s.saleDate).startsWith(month)).reduce((sum, s) => sum + Number(s.quantitySold || 0), 0);
+
   const topProducts = Object.values(sales.reduce((acc, sale) => {
     const key = sale.productId;
-    acc[key] = acc[key] || { name: productNameWithSku(sale.Product, rowVariant(sale)) || `Product #${key}`, qty: 0 };
+    const prodName = sale.Product?.productName || `Product #${key}`;
+    const sku = fullSku(sale.Product, rowVariant(sale));
+    acc[key] = acc[key] || { name: prodName, sku, qty: 0 };
     acc[key].qty += Number(sale.quantitySold || 0);
     return acc;
-  }, {})).sort((a, b) => b.qty - a.qty).slice(0, 3);
+  }, {})).sort((a, b) => b.qty - a.qty).slice(0, 4);
+
+  const hasFilter = Boolean(filter.date || filter.productId);
+
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card label="Today Units Sold" value={todayTotal} />
-        <Card label="This Month Units" value={monthTotal} />
-        <Card label="Low Stock After Sales" value={inventory.filter((item) => Number(item.quantity) <= Number(item.lowStockLimit || 0)).length} />
-        <Card label="Products Sold" value={topProducts.length} />
+      {/* Metrics Row */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Today Units Sold</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-slate-900">{todayTotal}</span>
+            <span className="text-xs font-semibold text-slate-500">units</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">Total volume recorded today</p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">This Month Units</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-indigo-600">{monthTotal}</span>
+            <span className="text-xs font-semibold text-slate-500">units</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">Monthly cumulative volume</p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Low Stock After Sales</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-amber-600">
+              {inventory.filter((item) => Number(item.quantity) <= Number(item.lowStockLimit || 0)).length}
+            </span>
+            <span className="text-xs font-semibold text-slate-500">items</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">Products at or below threshold</p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Sales Recorded</p>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-emerald-600">{sales.length}</span>
+            <span className="text-xs font-semibold text-slate-500">transactions</span>
+          </div>
+          <p className="mt-1 text-xs text-slate-400">Across all catalog items</p>
+        </div>
       </div>
+
+      {/* Record Sale Section */}
       <Section title="Record sale">
         {error && <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
         <FormGrid onSubmit={onSubmit}>
           <TextField label="Sale date" type="date" value={form.saleDate} onChange={(e) => setForm({ ...form, saleDate: e.target.value })} required />
-          <label className="block"><span className="text-sm font-semibold text-slate-600">Product</span><select className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm" value={form.inventoryId || ""} onChange={(e) => { const item = inventory.find((row) => String(row.id) === e.target.value); setForm({ ...form, inventoryId: e.target.value, productId: item?.productId || "" }); }} required><option value="">Select product</option>{inventory.map((item) => <option key={item.id} value={item.id}>{item.Product?.productName || "Product"}{item.variantName ? ` (${item.variantName}/${item.colorName || "-"})` : ""} - SKU: {fullSku(item.Product, item)} ({item.quantity} available)</option>)}</select></label>
+          <label className="block">
+            <span className="text-sm font-semibold text-slate-600">Product</span>
+            <select
+              className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              value={form.inventoryId || ""}
+              onChange={(e) => {
+                const item = inventory.find((row) => String(row.id) === e.target.value);
+                setForm({ ...form, inventoryId: e.target.value, productId: item?.productId || "" });
+              }}
+              required
+            >
+              <option value="">Select product</option>
+              {inventory.map((item) => {
+                const sku = fullSku(item.Product, item);
+                const halfLen = Math.max(4, Math.floor(sku.length / 2));
+                const shortSku = sku && sku.length > 7 ? `${sku.slice(0, halfLen)}…` : sku;
+                return (
+                  <option key={item.id} value={item.id}>
+                    {item.Product?.productName || "Product"}
+                    {item.variantName ? ` (${item.variantName}/${item.colorName || "-"})` : ""}
+                    {shortSku ? ` [SKU: ${shortSku}]` : ""} ({item.quantity} available)
+                  </option>
+                );
+              })}
+            </select>
+          </label>
           <TextField label="Quantity sold" type="number" min="1" max={selected?.quantity || 0} value={form.quantitySold} onChange={(e) => setForm({ ...form, quantitySold: e.target.value })} required />
-          <TextField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
-          {selected && <div className="md:col-span-2 rounded-md bg-slate-50 p-3 text-sm font-semibold text-slate-700 flex flex-wrap items-center justify-between gap-2"><span>Current available quantity: {selected.quantity}</span><div className="flex items-center gap-1.5"><span className="text-xs text-slate-500 font-normal">SKU:</span><CompactSku value={fullSku(selected.Product, rowVariant(selected))} /></div></div>}
-          {selected && Number(form.quantitySold || 0) > Number(selected.quantity || 0) && <div className="md:col-span-2 rounded-md bg-red-50 p-3 text-sm font-semibold text-red-700">You cannot sell more than available inventory stock.</div>}
-          <div className="md:col-span-2">{readOnly ? <span className="inline-flex rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">Managed by assigned manager</span> : <Button type="submit">Record Sale</Button>}</div>
+          <TextField label="Remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Optional customer or sale note" />
+          {selected && (
+            <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3.5 text-sm font-semibold text-slate-700 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Available Stock:</span>
+                <span className="rounded-md bg-white border border-slate-200 px-2.5 py-1 text-sm font-extrabold text-slate-900">{selected.quantity} units</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Product SKU:</span>
+                <CompactSku value={fullSku(selected.Product, rowVariant(selected))} />
+              </div>
+            </div>
+          )}
+          {selected && Number(form.quantitySold || 0) > Number(selected.quantity || 0) && (
+            <div className="md:col-span-2 rounded-md bg-red-50 p-3 text-sm font-semibold text-red-700">
+              You cannot sell more than available inventory stock.
+            </div>
+          )}
+          <div className="md:col-span-2">
+            {readOnly ? (
+              <span className="inline-flex rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-600">
+                Managed by assigned manager
+              </span>
+            ) : (
+              <Button type="submit">Record Sale</Button>
+            )}
+          </div>
         </FormGrid>
       </Section>
-      <Section title="Sales history" actions={<div className="flex flex-wrap gap-2"><input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="date" value={filter.date} onChange={(e) => setFilter({ ...filter, date: e.target.value })} /><select className="rounded-md border border-slate-200 px-3 py-2 text-sm" value={filter.productId} onChange={(e) => setFilter({ ...filter, productId: e.target.value })}><option value="">All products</option>{inventory.map((item) => <option key={item.id} value={item.productId}>{item.Product?.productName || "Product"}{item.variantName ? ` (${item.variantName}/${item.colorName || "-"})` : ""}</option>)}</select></div>}>
-        {topProducts.length > 0 && <div className="mb-4 flex flex-wrap gap-2">{topProducts.map((p) => <span key={p.name} className="rounded-full bg-cyan-50 px-3 py-1 text-sm font-semibold text-brand">{p.name}: {p.qty}</span>)}</div>}
-        {filtered.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Product", "SKU", "Variant", "Color", "Sold", "Before", "After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{filtered.map((sale) => <tr key={sale.id} className="border-t border-slate-100"><td className="p-3">{sale.saleDate}</td><td className="p-3"><div className="flex items-center gap-2">{sale.Product?.image && <ImageWithFallback src={sale.Product.image} alt="" className="h-9 w-9 rounded-md object-cover" fallbackClassName="h-9 w-9 rounded-md" />}<span className="font-semibold text-slate-900">{sale.Product?.productName || "Product"}</span></div></td><td className="p-3"><CompactSku value={fullSku(sale.Product, rowVariant(sale))} /></td><td>{sale.variantName || "-"}</td><td>{sale.colorName || "-"}</td><td><span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">{sale.quantitySold} units</span></td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No sales recorded yet" />}
+
+      {/* Sales History Section */}
+      <Section
+        title="Sales history"
+        actions={
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-xs">
+              <Calendar size={13} className="text-slate-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Date:</span>
+              <input
+                className="bg-transparent text-xs font-medium text-slate-700 outline-none"
+                type="date"
+                value={filter.date}
+                onChange={(e) => setFilter({ ...filter, date: e.target.value })}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-xs">
+              <Filter size={13} className="text-slate-400" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Product:</span>
+              <select
+                className="bg-transparent text-xs font-medium text-slate-700 outline-none max-w-[180px]"
+                value={filter.productId}
+                onChange={(e) => setFilter({ ...filter, productId: e.target.value })}
+              >
+                <option value="">All products</option>
+                {inventory.map((item) => (
+                  <option key={item.id} value={item.productId}>
+                    {item.Product?.productName || "Product"}
+                    {item.variantName ? ` (${item.variantName})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {hasFilter && (
+              <button
+                type="button"
+                onClick={() => setFilter({ date: "", productId: "" })}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
+              >
+                <RotateCcw size={12} /> Reset filters
+              </button>
+            )}
+          </div>
+        }
+      >
+        {/* Top Selling Products Header Banner */}
+        {topProducts.length > 0 && (
+          <div className="mb-5 rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-50/70 via-blue-50/40 to-slate-50 p-3.5">
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-900 flex items-center gap-1.5">
+              <TrendingUp size={14} className="text-indigo-600" />
+              <span>Top Selling Products</span>
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2.5">
+              {topProducts.map((p) => (
+                <div key={p.name} className="flex items-center gap-2 rounded-lg border border-indigo-200/80 bg-white px-3 py-1.5 shadow-xs">
+                  <span className="text-xs font-bold text-slate-900">{p.name}</span>
+                  {p.sku && <CompactSku value={p.sku} />}
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-extrabold text-emerald-800">
+                    {p.qty} sold
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {filtered.length ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 shadow-xs">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead className="bg-slate-50/90 text-slate-600 border-b border-slate-200">
+                <tr>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Sale Date</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Product</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">SKU Code</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Variant / Color</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Units Sold</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Stock Impact</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Remarks</th>
+                  <th className="p-3 font-semibold text-xs uppercase tracking-wider">Recorded At</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {filtered.map((sale) => (
+                  <tr key={sale.id} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="p-3 font-semibold text-slate-800 whitespace-nowrap">
+                      {sale.saleDate ? formatDate(sale.saleDate) : "-"}
+                    </td>
+                    <td className="p-3">
+                      <div className="flex items-center gap-2.5 min-w-[160px]">
+                        {sale.Product?.image && (
+                          <ImageWithFallback
+                            src={sale.Product.image}
+                            alt=""
+                            className="h-9 w-9 shrink-0 rounded-lg object-cover border border-slate-200"
+                            fallbackClassName="h-9 w-9 shrink-0 rounded-lg"
+                          />
+                        )}
+                        <span className="font-semibold text-slate-900 leading-tight">
+                          {sale.Product?.productName || "Product"}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <CompactSku value={fullSku(sale.Product, rowVariant(sale))} />
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      {sale.variantName || sale.colorName ? (
+                        <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+                          {sale.variantName || "Standard"}{sale.colorName ? ` / ${sale.colorName}` : ""}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 text-xs italic">Standard</span>
+                      )}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-xs font-extrabold text-emerald-800">
+                        {sale.quantitySold} units
+                      </span>
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5 font-mono text-xs">
+                        <span className="text-slate-500 font-medium" title="Stock before sale">{sale.stockBefore ?? "-"}</span>
+                        <span className="text-slate-300">→</span>
+                        <span className="font-extrabold text-indigo-700" title="Stock after sale">{sale.stockAfter ?? "-"}</span>
+                        <span className="text-[10px] text-slate-400 font-sans">units</span>
+                      </div>
+                    </td>
+                    <td className="p-3 max-w-[200px]">
+                      {sale.remarks ? (
+                        <span className="text-xs text-slate-600 truncate block" title={sale.remarks}>
+                          {sale.remarks}
+                        </span>
+                      ) : (
+                        <span className="text-slate-300 text-xs italic">None</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-xs text-slate-500 whitespace-nowrap">
+                      {sale.createdAt ? new Date(sale.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty text="No sales recorded yet" />
+        )}
       </Section>
     </div>
   );
@@ -1037,17 +1356,17 @@ function Table({ title, rows = [], cols, renderCell }) {
   return <Section title={title}>{rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{cols.map((c) => <th className="p-3" key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={row.id || i} className="border-t border-slate-100">{cols.map((c) => <td className="p-3" key={c}>{renderCell ? renderCell(row, c) : String(row[c] ?? "")}</td>)}</tr>)}</tbody></table></div> : <Empty />}</Section>;
 }
 
-function Orders({ rows, filter, setFilter, search, setSearch, onCancel }) {
+function Orders({ rows, filter, setFilter, search, setSearch, onCancel, onGoToFinance }) {
   const filtered = useMemo(() => rows.filter((order) => {
     const inDelivery = ["packing", "shipping", "out_for_delivery"].includes(order.status);
     const matchesFilter = filter === "all" || order.status === filter || (filter === "delivery" && inDelivery);
     const haystack = `${order.orderNumber} ${order.items?.map(itemLabelWithSku).join(" ")}`.toLowerCase();
     return matchesFilter && haystack.includes(search.toLowerCase());
   }), [rows, filter, search]);
-  return <Section title="My orders" actions={<input className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Search order/product" value={search} onChange={(e) => setSearch(e.target.value)} />}><div className="mb-4 flex flex-wrap gap-2">{["all", "pending", "approved", "delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => setFilter(status)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>{filtered.length ? <div className="space-y-4">{filtered.map((order) => <OrderCard key={order.id} order={order} onCancel={onCancel} />)}</div> : <Empty />}</Section>;
+  return <Section title="My orders" actions={<input className="rounded-md border border-slate-300 px-3 py-2 text-sm" placeholder="Search order/product" value={search} onChange={(e) => setSearch(e.target.value)} />}><div className="mb-4 flex flex-wrap gap-2">{["all", "pending", "payment", "delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => setFilter(status)} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>{filtered.length ? <div className="space-y-4">{filtered.map((order) => <OrderCard key={order.id} order={order} onCancel={onCancel} onGoToFinance={onGoToFinance} />)}</div> : <Empty />}</Section>;
 }
 
-function OrderCard({ order, onCancel }) {
+function OrderCard({ order, onCancel, onGoToFinance }) {
   const items = order.items || [];
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-soft transition hover:shadow-md">
@@ -1103,6 +1422,20 @@ function OrderCard({ order, onCancel }) {
           })}
         </div>
       </div>
+
+      {order.status === "payment" && (
+        <div className="mt-3.5 rounded-lg border border-purple-200 bg-purple-50 p-3 text-xs text-purple-900 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-bold">Payment Request Received</p>
+            <p className="text-[11px] text-purple-700 mt-0.5">Your order was accepted! A payment request is ready in Finance. Complete payment to start packing & delivery.</p>
+          </div>
+          {onGoToFinance && (
+            <Button className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-bold" onClick={onGoToFinance}>
+              Go to Finance
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 pt-3 border-t border-slate-100">
         <DeliveryTimeline order={order} />
@@ -1202,10 +1535,18 @@ function StatusBadge({ value }) {
 }
 
 function DealerFinance({ rows = [], pay, readOnly = false }) {
-  const [tab, setTab] = useState("unpaid");
-  const visible = rows.filter((p) => tab === "all" || (tab === "unpaid" ? p.paymentStatus === "pending" : p.paymentStatus === "paid"));
+  const [tab, setTab] = useState("all");
+  const [paymentModal, setPaymentModal] = useState(null);
+  const visible = rows.filter((p) => {
+    if (tab === "all") return true;
+    if (tab === "unpaid") return p.paymentStatus === "pending" || p.paymentStatus === "under_review";
+    if (tab === "under_review") return p.paymentStatus === "under_review";
+    if (tab === "pending") return p.paymentStatus === "pending";
+    if (tab === "paid") return p.paymentStatus === "paid";
+    return p.paymentStatus === tab;
+  });
   return (
-    <Section title="Payment requests and history" actions={<div className="flex gap-2">{["unpaid", "paid", "all"].map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-full px-3 py-1 text-sm font-semibold ${tab === item ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{item}</button>)}</div>}>
+    <Section title="Payment requests and history" actions={<div className="flex flex-wrap gap-2">{["all", "pending", "under_review", "paid"].map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-full px-3 py-1 text-sm font-semibold ${tab === item ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{item.replaceAll("_", " ")}</button>)}</div>}>
       {visible.length ? (
         <div className="space-y-4">
           {visible.map((p) => {
@@ -1235,11 +1576,14 @@ function DealerFinance({ rows = [], pay, readOnly = false }) {
                       readOnly ? (
                         <span className="rounded-md bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600">Managed by Finance Manager</span>
                       ) : (
-                        <>
-                          <Button className="text-xs px-3 py-1.5" onClick={() => pay(p.id, "online")}>Pay Online</Button>
-                          <Button variant="ghost" className="text-xs px-3 py-1.5" onClick={() => pay(p.id, "cash")}>Cash Paid</Button>
-                        </>
+                        <Button className="text-xs px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm" onClick={() => setPaymentModal(p)}>
+                          Select Mode & Pay
+                        </Button>
                       )
+                    ) : p.paymentStatus === "under_review" ? (
+                      <span className="rounded-md bg-amber-50 border border-amber-300 px-3 py-1.5 text-xs font-bold text-amber-800 inline-flex items-center gap-1.5 shadow-sm">
+                        <Clock size={13} className="text-amber-600" /> Payment Done · Awaiting Org Confirmation
+                      </span>
                     ) : (
                       <span className="rounded-md bg-green-50 border border-green-200 px-3 py-1 text-xs font-bold text-green-700 inline-flex items-center gap-1.5">
                         Paid <FinanceBadge value={p.paymentMethod} />
@@ -1247,6 +1591,15 @@ function DealerFinance({ rows = [], pay, readOnly = false }) {
                     )}
                   </div>
                 </div>
+
+                {p.paymentStatus === "under_review" && (
+                  <div className="mt-3 rounded-lg bg-amber-50/90 border border-amber-200 p-3 text-xs text-amber-900">
+                    <p className="font-bold">Payment Request Sent - Under Review</p>
+                    <p className="text-[11px] text-amber-700 mt-0.5">
+                      You submitted payment of {formatMoney(p.amount)} via <strong>{p.paymentMethod?.toUpperCase()}</strong> (Txn/Ref: <strong>{p.transactionId || "-"}</strong>). Organization Finance Manager has received your request and will click <strong>"Payment Confirmed"</strong> to move your order to packing.
+                    </p>
+                  </div>
+                )}
 
                 {/* Properly Labeled Products Section */}
                 <div className="mt-3.5">
@@ -1308,16 +1661,180 @@ function DealerFinance({ rows = [], pay, readOnly = false }) {
       ) : (
         <Empty text="No payment requests yet" />
       )}
+      {paymentModal && <DealerPaymentModal payment={paymentModal} onClose={() => setPaymentModal(null)} onSubmit={pay} />}
     </Section>
+  );
+}
+
+function DealerPaymentModal({ payment, onClose, onSubmit }) {
+  const [method, setMethod] = useState("");
+  const [txnId, setTxnId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!method) {
+      alert("Please select a mode of payment first.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onSubmit(payment.id, {
+        paymentMethod: method,
+        transactionId: txnId.trim() || undefined
+      });
+      onClose();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 p-4 backdrop-blur-xs">
+      <form onSubmit={handleSubmit} className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl border border-slate-200">
+        <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Select Mode of Payment</h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Invoice #{payment.invoiceNumber || payment.id} · Order Ref #{payment.orderNumber || payment.orderId}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-xl bg-indigo-50/70 border border-indigo-100 p-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Total Payable Amount</p>
+            <p className="text-2xl font-black text-slate-950 mt-0.5">{formatMoney(payment.amount)}</p>
+          </div>
+          <div className="text-right text-xs text-slate-500 font-medium">
+            <span>Awaiting Payment Submission</span>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
+            Choose Payment Mode <span className="text-rose-500">*</span>
+          </label>
+          <div className="grid grid-cols-3 gap-2.5">
+            {[
+              { id: "online", label: "Online", desc: "UPI / Card / Net Banking" },
+              { id: "cash", label: "Cash", desc: "Handover / Counter" },
+              { id: "bank_transfer", label: "Bank Transfer", desc: "NEFT / RTGS / IMPS" }
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setMethod(opt.id)}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  method === opt.id
+                    ? "border-indigo-600 bg-indigo-50/80 ring-2 ring-indigo-200 text-indigo-950 font-bold"
+                    : "border-slate-200 bg-white hover:border-slate-300 text-slate-800"
+                }`}
+              >
+                <p className="font-bold text-sm">{opt.label}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <TextField
+            label={
+              method === "cash"
+                ? "Receipt / Cash Handover Note (Optional)"
+                : method === "bank_transfer"
+                ? "Bank UTR / Reference No (Optional)"
+                : "Transaction ID / UPI Reference (Optional)"
+            }
+            placeholder={
+              method === "cash"
+                ? "e.g., Handed over to Org finance rep"
+                : method === "bank_transfer"
+                ? "e.g., UTR789234823"
+                : "e.g., UPI-19827364"
+            }
+            value={txnId}
+            onChange={(e) => setTxnId(e.target.value)}
+          />
+        </div>
+
+        <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
+          <strong>Notice:</strong> Once you send this request, the Organization Finance Manager will see your selected mode of payment and click <strong>"Payment Confirmed"</strong> to move your order to packing.
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={!method || submitting}>
+            {submitting ? "Submitting..." : "Send Payment Done Request"}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
 function FinanceBadge({ value }) {
   const tone = String(value || "").toLowerCase();
-  const classes = tone === "paid" ? "border-green-200 bg-green-50 text-green-700" : tone === "pending" ? "border-yellow-200 bg-yellow-50 text-yellow-700" : ["failed", "rejected"].includes(tone) ? "border-red-200 bg-red-50 text-red-700" : tone === "online" ? "border-cyan-200 bg-cyan-50 text-brand" : tone === "cash" ? "border-slate-200 bg-slate-100 text-slate-700" : "border-slate-200 bg-slate-50 text-slate-600";
-  return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold ${classes}`}>{value || "-"}</span>;
+  const classes = tone === "paid" ? "border-green-200 bg-green-50 text-green-700 font-bold" : tone === "under_review" ? "border-amber-300 bg-amber-50 text-amber-800 font-bold" : tone === "pending" ? "border-yellow-200 bg-yellow-50 text-yellow-700 font-semibold" : ["failed", "rejected"].includes(tone) ? "border-red-200 bg-red-50 text-red-700" : tone === "online" ? "border-cyan-200 bg-cyan-50 text-brand" : tone === "cash" ? "border-slate-200 bg-slate-100 text-slate-700" : "border-slate-200 bg-slate-50 text-slate-600";
+  return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-semibold capitalize ${classes}`}>{String(value || "-").replaceAll("_", " ")}</span>;
 }
 
 function DealerChat({ messages = [], reply, setReply, sendReply }) {
-  return <Section title="Messages"><div className="mb-4 h-96 space-y-3 overflow-y-auto rounded-md bg-slate-50 p-4">{messages.length ? messages.map((m) => { const mine = m.title === "Dealer reply" || m.title === "Payment update" || m.messageType === "stock_request"; return <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}><div className={`max-w-[78%] rounded-md px-3 py-2 text-sm ${mine ? "bg-brand text-white" : "border border-slate-200 bg-white"}`}><p>{m.message}</p>{m.messageType === "stock_request" && <p className="mt-1 text-[11px] opacity-80">Requested: {m.requestedQuantity}, available: {m.availableStock}</p>}<p className="mt-1 text-[11px] opacity-75">{new Date(m.createdAt).toLocaleString()}</p></div></div>; }) : <Empty text="No messages yet" />}</div><form onSubmit={sendReply} className="flex gap-2"><input className="flex-1 rounded-md border border-slate-300 px-3 py-2" value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Reply to admin" required /><Button>Reply</Button></form></Section>;
+  const chatEndRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  return (
+    <Section title="Messages to Admin">
+      <div className="mb-4 h-96 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-4 border border-slate-200/80">
+        {messages.length ? (
+          messages.map((m) => {
+            const mine = m.title === "Dealer reply" || m.title === "Payment update" || m.messageType === "stock_request" || m.sender?.role === "DEALER" || m.sender?.role === "DEALER_CEO";
+            return (
+              <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-xs break-words break-all whitespace-pre-wrap overflow-hidden ${
+                    mine ? "bg-brand text-white" : "border border-slate-200 bg-white text-slate-900"
+                  }`}
+                >
+                  <p className="break-words break-all whitespace-pre-wrap overflow-hidden leading-relaxed">{m.message}</p>
+                  {m.messageType === "stock_request" && (
+                    <p className="mt-1.5 rounded-md bg-black/10 px-2 py-1 text-[11px] font-medium">
+                      Stock Request: Requested {m.requestedQuantity}, available: {m.availableStock}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] opacity-75 text-right">
+                    {new Date(m.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <Empty text="No messages yet" />
+        )}
+        <div ref={chatEndRef} />
+      </div>
+      <form onSubmit={sendReply} className="flex gap-2">
+        <input
+          className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-cyan-100"
+          value={reply}
+          onChange={(e) => setReply(e.target.value)}
+          placeholder="Reply to admin..."
+          required
+        />
+        <Button type="submit">Reply</Button>
+      </form>
+    </Section>
+  );
 }

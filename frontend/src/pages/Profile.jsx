@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff, KeyRound, Lock, Mail, Save, ShieldCheck, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Lock, Mail, Phone, Save, ShieldCheck, ToggleLeft, ToggleRight, UserRound } from "lucide-react";
 import Layout from "../components/Layout";
 import { api, fileUrl } from "../api/client";
 import { Button, Loading, PageHeader, SectionCard, StatusBadge, TextField, formatDate } from "../components/UI";
@@ -13,7 +13,7 @@ export default function Profile() {
   const navigate = useNavigate();
   const { user, updateStoredUser } = useAuth();
   const [profile, setProfile] = useState(null);
-  const [form, setForm] = useState({ name: "", phone: "", ownerName: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", ownerName: "" });
   const [passwords, setPasswords] = useState(emptyPasswordForm);
   const [passwordOtpSent, setPasswordOtpSent] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -36,7 +36,8 @@ export default function Profile() {
     setProfile(data);
     setForm({
       name: data.user?.name || "",
-      phone: data.dealer?.phone || "",
+      email: data.user?.email || "",
+      phone: data.user?.phone || data.dealer?.phone || "",
       ownerName: data.dealer?.ownerName || ""
     });
     setLoading(false);
@@ -58,7 +59,24 @@ export default function Profile() {
       const { data } = await api.put("/profile/me", form);
       setProfile(data);
       const stored = localStorage.getItem("dms_user");
-      if (stored) localStorage.setItem("dms_user", JSON.stringify({ ...JSON.parse(stored), name: data.user.name }));
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          localStorage.setItem("dms_user", JSON.stringify({
+            ...parsed,
+            name: data.user.name,
+            email: data.user.email,
+            phone: data.user.phone
+          }));
+        } catch {}
+      }
+      if (updateStoredUser) {
+        updateStoredUser({
+          name: data.user.name,
+          email: data.user.email,
+          phone: data.user.phone
+        });
+      }
       setMessage("Profile updated successfully");
     } catch (err) {
       setError(err.response?.data?.message || "Unable to update profile");
@@ -150,6 +168,7 @@ export default function Profile() {
   const infoRows = [
     ["Name", profile.user?.name],
     ["Email", profile.user?.email],
+    ["Phone", profile.user?.phone || profile.dealer?.phone],
     ["Role", String(profile.user?.role || "").replaceAll("_", " ")],
     ["Status", profile.user?.status],
     ["Company", profile.company?.companyName],
@@ -192,11 +211,42 @@ export default function Profile() {
         <div className="space-y-6">
           <SectionCard title="Edit basic details">
             <form onSubmit={saveProfile} className="grid gap-4 md:grid-cols-2">
-              <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} icon={UserRound} required />
-              <TextField label="Email" value={profile.user?.email || ""} icon={Mail} readOnly className="opacity-80" />
-              {user?.role === "DEALER" && <TextField label="Owner name" value={form.ownerName} onChange={(e) => setForm({ ...form, ownerName: e.target.value })} />}
-              {user?.role === "DEALER" && <TextField label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />}
-              <div className="md:col-span-2"><Button type="submit" disabled={saving}><Save size={16} /> Save Details</Button></div>
+              <TextField
+                label="Name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                icon={UserRound}
+                required
+              />
+              <TextField
+                label="Email"
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                icon={Mail}
+                required
+              />
+              <TextField
+                label="Phone number"
+                type="tel"
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })}
+                icon={Phone}
+                placeholder="10-digit mobile number"
+                maxLength={10}
+              />
+              {user?.role === "DEALER" && (
+                <TextField
+                  label="Owner name"
+                  value={form.ownerName}
+                  onChange={(e) => setForm({ ...form, ownerName: e.target.value })}
+                />
+              )}
+              <div className="md:col-span-2">
+                <Button type="submit" disabled={saving}>
+                  <Save size={16} /> Save Details
+                </Button>
+              </div>
             </form>
           </SectionCard>
 

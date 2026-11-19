@@ -1,5 +1,6 @@
-  import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { formatTitleCase } from "../utils/textFormatter";
+import { useChatSocket } from "../utils/useSocket";
   import { AlertTriangle, CheckCircle2, Clock, Copy, Check, Eye, EyeOff, Gift, IndianRupee, PackageCheck, Pencil, RefreshCw, Star, Trash2, Truck, Users, X, Paperclip, Clock3, Banknote, CreditCard, AlertCircle } from "lucide-react";
   import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
   import Layout from "../components/Layout";
@@ -199,8 +200,12 @@ import { formatTitleCase } from "../utils/textFormatter";
     const createDealerAction = async (e) => {
       e.preventDefault();
       if (dealerForm.password !== dealerForm.confirmPassword) return alert("Passwords do not match");
-      if (dealerForm.pincode && !/^\d{6}$/.test(String(dealerForm.pincode))) return alert("Pincode must be exactly 6 digits");
-      if (dealerForm.phone && !/^\d{10}$/.test(String(dealerForm.phone))) return alert("Phone must be exactly 10 digits");
+      if (!dealerForm.pincode || !/^\d{6}$/.test(String(dealerForm.pincode).trim())) {
+        const message = "Pincode must be exactly 6 digits";
+        setDealerError(message);
+        return alert(message);
+      }
+      if (dealerForm.phone && !/^\d{10}$/.test(String(dealerForm.phone).trim())) return alert("Phone must be exactly 10 digits");
       try {
         const res = await api.post("/admin/dealers", dealerForm);
         const created = res.data?.dealer || res.data;
@@ -249,16 +254,31 @@ import { formatTitleCase } from "../utils/textFormatter";
 
     const createProduct = async (e) => {
       e.preventDefault();
+      const openingStock = Number(productForm.quantity || 0);
+      const variantTotal = variantRows.reduce((sum, row) => sum + Number(row.stockQuantity || 0), 0);
+      if (openingStock <= 0 && variantTotal <= 0) {
+        return alert("Opening quantity / available company stock must be greater than 0");
+      }
+      const syncVariants = variantRows.map((r, i) => {
+        if (i === 0 && Number(r.stockQuantity || 0) === 0 && openingStock > 0 && variantRows.length === 1) {
+          return { ...r, stockQuantity: openingStock };
+        }
+        return r;
+      });
       const formData = new FormData();
       Object.entries(productForm).forEach(([key, value]) => formData.append(key, value));
-      formData.append("variants", JSON.stringify(variantRows));
+      formData.append("variants", JSON.stringify(syncVariants));
       if (productImage) formData.append("image", productImage);
-      await api.post("/admin/products", formData, { headers: { "Content-Type": "multipart/form-data" } });
-      setProductForm({ ...productForm, productName: "", description: "", manufacturingDate: "", expiryDate: "", quantity: 0 });
-      setVariantRows([{ variantName: "Standard", colorName: "Default", stockQuantity: 0, priceOverride: "", skuSuffix: "", status: "active" }]);
-      setProductImage(null);
-      setProductPreview("");
-      load(true);
+      try {
+        await api.post("/admin/products", formData, { headers: { "Content-Type": "multipart/form-data" } });
+        setProductForm({ ...productForm, productName: "", description: "", manufacturingDate: "", expiryDate: "", quantity: 0 });
+        setVariantRows([{ variantName: "Standard", colorName: "Default", stockQuantity: 0, priceOverride: "", skuSuffix: "", status: "active" }]);
+        setProductImage(null);
+        setProductPreview("");
+        load(true);
+      } catch (err) {
+        alert(err.response?.data?.message || "Failed to add product");
+      }
     };
 
     const loadDealerPerformance = async (next = performanceFilter) => {
@@ -297,6 +317,16 @@ import { formatTitleCase } from "../utils/textFormatter";
       load(true);
     };
 
+    const confirmPayment = async (paymentId) => {
+      try {
+        await api.post(`/admin/finance/confirm-payment/${paymentId}`);
+        alert("Payment confirmed successfully! Order has been moved to packing.");
+        load(true);
+      } catch (err) {
+        alert(err.response?.data?.message || "Failed to confirm payment");
+      }
+    };
+
     const quickEditProduct = async (product) => {
       setEditingProduct(product);
     };
@@ -319,10 +349,42 @@ import { formatTitleCase } from "../utils/textFormatter";
       load(true);
     };
 
+    useChatSocket((payload) => {
+      if (payload?.type === "chat_message" && payload?.data) {
+        setData((curr) => {
+          const conv = curr.messages_conversations || { dealers: [], messages: [] };
+          const currentMsgs = conv.messages || [];
+          if (currentMsgs.some((m) => m.id === payload.data.id)) return curr;
+          return {
+            ...curr,
+            messages_conversations: {
+              ...conv,
+              messages: [...currentMsgs, payload.data]
+            }
+          };
+        });
+      }
+    });
+
     const sendMessage = async (messageFormOverride) => {
-      await api.post("/admin/messages/send", messageFormOverride);
-      setMessageForm({ title: "", message: "", dealerId: "" });
-      load(true);
+      try {
+        const { data: sentMsg } = await api.post("/admin/messages/send", messageFormOverride);
+        setMessageForm((prev) => ({ ...prev, message: "" }));
+        setData((curr) => {
+          const conv = curr.messages_conversations || { dealers: [], messages: [] };
+          const currentMsgs = conv.messages || [];
+          if (currentMsgs.some((m) => m.id === sentMsg.id)) return curr;
+          return {
+            ...curr,
+            messages_conversations: {
+              ...conv,
+              messages: [...currentMsgs, sentMsg]
+            }
+          };
+        });
+      } catch (err) {
+        alert(err.response?.data?.message || "Failed to send message");
+      }
     };
 
     const markUpdateRead = async (id) => {
@@ -408,7 +470,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                 <TextField label="Licenses for dealer" type="number" min="1" step="1" value={dealerForm.allocatedLicenses} onChange={(e) => setDealerForm({ ...dealerForm, allocatedLicenses: e.target.value })} required />
                 <SearchableSelect label="State" options={Object.keys(INDIA_STATES_CITIES)} value={dealerForm.state} onChange={(val) => setDealerForm({ ...dealerForm, state: val, city: "" })} placeholder="Select State..." required />
                 <SearchableSelect label="City" options={INDIA_STATES_CITIES[dealerForm.state] || []} value={dealerForm.city} onChange={(val) => setDealerForm({ ...dealerForm, city: val })} placeholder="Select City..." required disabled={!dealerForm.state} />
-                <TextField label="Pincode" value={dealerForm.pincode} onChange={(e) => setDealerForm({ ...dealerForm, pincode: e.target.value })} required />
+                <TextField label="Pincode" inputMode="numeric" pattern="\d{6}" maxLength={6} minLength={6} title="Pincode must be exactly 6 digits" value={dealerForm.pincode} onChange={(e) => setDealerForm({ ...dealerForm, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) })} required />
                 <div className="md:col-span-2">
                   <TextField label="Address" value={dealerForm.address} onChange={(e) => setDealerForm({ ...dealerForm, address: e.target.value })} required />
                 </div>
@@ -473,7 +535,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           <>
             <Section title="Create product" actions={<span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">SKU auto-generates after save</span>}>
               <FormGrid onSubmit={createProduct}>
-              {Object.keys(productForm).map((k) => <TextField key={k} label={k === "quantity" ? "Opening quantity" : k.replace(/([A-Z])/g, " $1")} value={productForm[k]} onChange={(e) => setProductForm({ ...productForm, [k]: e.target.value })} type={["price", "quantity", "lowStockLimit", "creditCoins"].includes(k) ? "number" : ["manufacturingDate", "expiryDate"].includes(k) ? "date" : "text"} min={["quantity", "lowStockLimit", "creditCoins"].includes(k) ? "0" : undefined} />)}
+              {Object.keys(productForm).map((k) => <TextField key={k} label={k === "quantity" ? "Opening quantity" : k.replace(/([A-Z])/g, " $1")} value={productForm[k]} onChange={(e) => { const val = e.target.value; setProductForm({ ...productForm, [k]: val }); if (k === "quantity" && variantRows.length === 1) { setVariantRows([{ ...variantRows[0], stockQuantity: Number(val || 0) }]); } }} type={["price", "quantity", "lowStockLimit", "creditCoins"].includes(k) ? "number" : ["manufacturingDate", "expiryDate"].includes(k) ? "date" : "text"} min={k === "quantity" ? "1" : ["lowStockLimit", "creditCoins"].includes(k) ? "0" : undefined} required={k === "quantity" || k === "productName" || k === "price"} />)}
                 <FileUploadPreview label="Product photo" preview={productPreview} accept="image/*" onChange={(e) => { const file = e.target.files?.[0]; setProductImage(file || null); setProductPreview(file ? URL.createObjectURL(file) : ""); }} />
                 <div className="md:col-span-2">
                   <VariantEditor rows={variantRows} setRows={setVariantRows} />
@@ -502,14 +564,14 @@ import { formatTitleCase } from "../utils/textFormatter";
         )}
         {activeTab === "inventory" && <InventoryBoard products={(data.products || []).map((p) => ({ ...p, quantity: p.CompanyInventory?.quantity || 0, lowStockLimit: p.CompanyInventory?.lowStockLimit || 0 }))} dealerStock={data.stock_dealers || []} />}
         {activeTab === "orders" && <OrderTable rows={data.orders || []} updateOrder={updateOrder} approveOrder={approveOrder} approvingOrderId={approvingOrderId} schedules={schedules} setSchedules={setSchedules} filter={orderFilter} setFilter={setOrderFilter} page={orderPage} setPage={setOrderPage} />}
-        {activeTab === "delivery" && <DeliveryManagement rows={(data.orders || []).filter((o) => ["approved", "packing", "shipping", "out_for_delivery", "delivered"].includes(o.status))} updateOrder={updateOrder} filter={deliveryFilter} setFilter={setDeliveryFilter} page={deliveryPage} setPage={setDeliveryPage} />}
+        {activeTab === "delivery" && <DeliveryManagement rows={(data.orders || []).filter((o) => ["packing", "shipping", "out_for_delivery", "delivered", "approved"].includes(o.status))} updateOrder={updateOrder} filter={deliveryFilter} setFilter={setDeliveryFilter} page={deliveryPage} setPage={setDeliveryPage} />}
         {activeTab === "finance" && (
           <>
             <MetricGrid items={[[Clock3, "Pending Payments", data.finance_payments?.stats?.pendingPayments || 0, "#F59E0B"], [CheckCircle2, "Paid Payments", data.finance_payments?.stats?.paidPayments || 0, "#10B981"], [Banknote, "Cash Payments", data.finance_payments?.stats?.cashPayments || 0, "#8B5CF6"], [CreditCard, "Online Payments", data.finance_payments?.stats?.onlinePayments || 0, "#4F46E5"], [AlertCircle, "Total Pending", formatMoney(data.finance_payments?.stats?.totalPendingAmount || 0), "#EF4444"], [IndianRupee, "Total Paid", formatMoney(data.finance_payments?.stats?.totalPaidAmount || 0), "#10B981"]]} cols="xl:grid-cols-3" />
             <Section title="Approved orders waiting for payment request">
               {data["finance_approved-orders"]?.length ? <div className="space-y-3">{data["finance_approved-orders"].map((o) => <div key={o.id} className="rounded-md border border-slate-200 p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{o.orderNumber} · {formatMoney(o.totalAmount)}</p><p className="text-sm text-slate-500">{o.Dealer?.dealerName} · approved {o.approvedAt ? new Date(o.approvedAt).toLocaleString() : ""}</p></div><div className="flex flex-wrap items-center gap-2"><input type="file" className="max-w-56 text-sm" onChange={(e) => setInvoiceFiles({ ...invoiceFiles, [o.id]: e.target.files?.[0] || null })} /><Button onClick={() => sendPaymentRequest(o.id)}>Send Payment Request</Button></div></div></div>)}</div> : <Empty text="No approved orders waiting for payment request" />}
             </Section>
-            <FinanceTable rows={data.finance_payments?.payments || []} dealers={data.dealers || []} filter={financeFilter} setFilter={setFinanceFilter} sendReminder={sendPaymentReminder} />
+            <FinanceTable rows={data.finance_payments?.payments || []} dealers={data.dealers || []} filter={financeFilter} setFilter={setFinanceFilter} sendReminder={sendPaymentReminder} confirmPayment={confirmPayment} />
           </>
         )}
         {activeTab === "creditManagement" && <CreditManagement data={data} form={rewardForm} setForm={setRewardForm} preview={rewardPreview} setPreview={setRewardPreview} setImage={setRewardImage} createReward={createReward} updateRedemption={updateRedemption} reload={() => load(true)} />}
@@ -975,12 +1037,14 @@ import { formatTitleCase } from "../utils/textFormatter";
   }
 
   function CompactSku({ value }) {
-    const sku = String(value || "-");
-    const preview = sku.length > 14 ? `${sku.slice(0, 7)}…${sku.slice(-4)}` : sku;
+    const sku = String(value || "").trim();
+    if (!sku || sku === "-") return <span className="text-slate-400 font-mono text-xs">-</span>;
+    const halfLen = Math.max(4, Math.floor(sku.length / 2));
+    const preview = sku.length > 7 ? `${sku.slice(0, halfLen)}…` : sku;
     return (
-      <span className="inline-flex max-w-full items-center gap-1 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku}`}>
+      <span className="inline-flex max-w-full items-center gap-1 rounded bg-indigo-50/80 border border-indigo-100 px-1.5 py-0.5 font-mono text-xs text-indigo-700 font-semibold" title={`Full SKU: ${sku} (Click icon to copy)`}>
         <span className="truncate">{preview}</span>
-        <CopySku value={value} />
+        <CopySku value={sku} />
       </span>
     );
   }
@@ -1337,7 +1401,57 @@ import { formatTitleCase } from "../utils/textFormatter";
           <MiniList title="Dealer sales performance" rows={stats.dealerPerformance || []} left="dealerName" right="quantitySold" />
         </div>
         <Section title="Dealer sales records">
-          {rows.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Date", "Dealer", "Product + SKU", "Quantity", "Stock Before", "Stock After", "Remarks", "Created"].map((h) => <th className="p-3" key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((sale) => <tr className="border-t border-slate-100" key={sale.id}><td className="p-3">{sale.saleDate}</td><td>{sale.Dealer?.dealerName || `Dealer #${sale.dealerId}`}</td><td><div className="flex items-center gap-2">{sale.Product?.image && <img src={fileUrl(sale.Product.image)} alt="" className="h-9 w-9 rounded-md object-cover" onError={(e) => { e.currentTarget.style.display = "none"; }} />}<span>{productNameWithSku(sale.Product, sale.ProductVariant || sale)}<span className="block text-xs text-slate-500">{sale.variantName ? `${sale.variantName} / ${sale.colorName || "-"}` : "Standard"}</span></span></div></td><td>{sale.quantitySold}</td><td>{sale.stockBefore}</td><td>{sale.stockAfter}</td><td>{sale.remarks || "-"}</td><td>{new Date(sale.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <Empty text="No dealer sales recorded yet" />}
+          {rows.length ? (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                  <tr>
+                    {["Date", "Dealer", "Product", "SKU Code", "Variant", "Quantity Sold", "Stock Impact", "Remarks", "Created"].map((h) => (
+                      <th className="p-3 font-semibold text-xs uppercase tracking-wider" key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {rows.map((sale) => (
+                    <tr className="hover:bg-slate-50/60 transition-colors" key={sale.id}>
+                      <td className="p-3 font-semibold text-slate-800 whitespace-nowrap">{sale.saleDate ? formatDate(sale.saleDate) : "-"}</td>
+                      <td className="p-3 font-medium text-slate-800">{sale.Dealer?.dealerName || `Dealer #${sale.dealerId}`}</td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          {sale.Product?.image && <img src={fileUrl(sale.Product.image)} alt="" className="h-9 w-9 rounded-md object-cover border border-slate-200" onError={(e) => { e.currentTarget.style.display = "none"; }} />}
+                          <span className="font-semibold text-slate-900">{sale.Product?.productName || "Product"}</span>
+                        </div>
+                      </td>
+                      <td className="p-3 whitespace-nowrap">
+                        <CompactSku value={fullVariantSku(sale.Product || {}, sale.ProductVariant || sale)} />
+                      </td>
+                      <td className="p-3 whitespace-nowrap">
+                        {sale.variantName || sale.colorName ? (
+                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700">
+                            {sale.variantName || "Standard"}{sale.colorName ? ` / ${sale.colorName}` : ""}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-xs italic">Standard</span>
+                        )}
+                      </td>
+                      <td className="p-3 whitespace-nowrap">
+                        <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
+                          {sale.quantitySold} units
+                        </span>
+                      </td>
+                      <td className="p-3 whitespace-nowrap font-mono text-xs text-slate-600">
+                        {sale.stockBefore ?? "-"} → <span className="font-bold text-indigo-700">{sale.stockAfter ?? "-"}</span>
+                      </td>
+                      <td className="p-3 max-w-[200px] text-xs text-slate-600 truncate" title={sale.remarks || ""}>{sale.remarks || <span className="text-slate-300 italic">None</span>}</td>
+                      <td className="p-3 text-xs text-slate-500 whitespace-nowrap">{sale.createdAt ? new Date(sale.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty text="No dealer sales recorded yet" />
+          )}
         </Section>
       </div>
     );
@@ -1638,6 +1752,8 @@ import { formatTitleCase } from "../utils/textFormatter";
     const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
     const [selectedManager, setSelectedManager] = useState(null);
     const [editingManager, setEditingManager] = useState(null);
+    const [creating, setCreating] = useState(false);
+    const [savingEdit, setSavingEdit] = useState(false);
     const load = (force = false) => cachedGet(api, "/admin-ceo/managers", {}, { force }).then(({ data }) => setRows(data));
     useEffect(() => { load(); }, []);
     const createManager = async (e) => {
@@ -1645,12 +1761,15 @@ import { formatTitleCase } from "../utils/textFormatter";
       if (form.password !== form.confirmPassword) {
         return window.alert("Passwords do not match");
       }
+      setCreating(true);
       try {
         await api.post("/admin-ceo/managers", form);
         setForm({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
         load(true);
       } catch (error) {
         window.alert(error.response?.data?.message || "Unable to create manager");
+      } finally {
+        setCreating(false);
       }
     };
     const setStatus = async (id, status) => {
@@ -1662,12 +1781,15 @@ import { formatTitleCase } from "../utils/textFormatter";
     };
     const saveEdit = async (e) => {
       e.preventDefault();
+      setSavingEdit(true);
       try {
         await api.put(`/admin-ceo/managers/${editingManager.id}`, { name: editingManager.name, phone: editingManager.phone, role: editingManager.role });
         setEditingManager(null);
         load(true);
       } catch (err) {
         window.alert(err.response?.data?.message || "Failed to update manager");
+      } finally {
+        setSavingEdit(false);
       }
     };
     const removeManager = async (manager) => {
@@ -1685,7 +1807,7 @@ import { formatTitleCase } from "../utils/textFormatter";
             <TextField label="Password" type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required suffix={<button type="button" onClick={() => setShowPassword(!showPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
             <TextField label="Confirm Password" type={showConfirmPassword ? "text" : "password"} value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} required suffix={<button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
             <label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label>
-            <div className="md:col-span-2"><Button type="submit"><Plus size={16} /> Create Manager</Button></div>
+            <div className="md:col-span-2"><Button type="submit" disabled={creating}>{creating ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />} {creating ? "Creating Manager..." : "Create Manager"}</Button></div>
           </FormGrid>
         </Section>
         <Section title="Organization Managers">
@@ -1694,7 +1816,7 @@ import { formatTitleCase } from "../utils/textFormatter";
           </div>
         </Section>
         {selectedManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setSelectedManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-details-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-details-title" className="text-xl font-bold text-slate-950">{selectedManager.name}</h2><p className="mt-1 text-sm text-slate-500">Complete Manager Details</p></div><button type="button" aria-label="Close manager details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setSelectedManager(null)}><X size={18} /></button></div><dl className="mt-6 grid gap-4 sm:grid-cols-2">{[["Email", selectedManager.email], ["Phone", selectedManager.phone || "-"], ["Role", String(selectedManager.role || "-").replaceAll("_", " ")], ["Status", selectedManager.status], ["Created", formatDate(selectedManager.createdAt)]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm font-semibold capitalize text-slate-900">{value}</dd></div>)}</dl></div></div>}
-        {editingManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setEditingManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-edit-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-edit-title" className="text-xl font-bold text-slate-950">Edit {editingManager.name}</h2><p className="mt-1 text-sm text-slate-500">Update Manager Details</p></div><button type="button" aria-label="Close edit manager" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setEditingManager(null)}><X size={18} /></button></div><form onSubmit={saveEdit} className="mt-6 space-y-4"><TextField label="Name" value={editingManager.name} onChange={(e) => setEditingManager({ ...editingManager, name: e.target.value })} required /><TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={editingManager.phone || ""} onChange={(e) => setEditingManager({ ...editingManager, phone: e.target.value.replace(/\D/g, '') })} required /><label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={editingManager.role} onChange={(e) => setEditingManager({ ...editingManager, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label><div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setEditingManager(null)}>Cancel</Button><Button type="submit">Save Changes</Button></div></form></div></div>}
+        {editingManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setEditingManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-edit-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-edit-title" className="text-xl font-bold text-slate-950">Edit {editingManager.name}</h2><p className="mt-1 text-sm text-slate-500">Update Manager Details</p></div><button type="button" aria-label="Close edit manager" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setEditingManager(null)}><X size={18} /></button></div><form onSubmit={saveEdit} className="mt-6 space-y-4"><TextField label="Name" value={editingManager.name} onChange={(e) => setEditingManager({ ...editingManager, name: e.target.value })} required /><TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={editingManager.phone || ""} onChange={(e) => setEditingManager({ ...editingManager, phone: e.target.value.replace(/\D/g, '') })} required /><label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={editingManager.role} onChange={(e) => setEditingManager({ ...editingManager, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label><div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setEditingManager(null)}>Cancel</Button><Button type="submit" disabled={savingEdit}>{savingEdit ? <RefreshCw size={16} className="animate-spin" /> : null} {savingEdit ? "Saving Changes..." : "Save Changes"}</Button></div></form></div></div>}
       </div>
     );
   }
@@ -2090,7 +2212,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     const safePage = Math.min(page, totalPages);
     const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
     return (
-      <Section title="Order & delivery management" actions={<div className="flex flex-wrap gap-2">{["all", "pending", "approved", "packing", "shipping", "out_for_delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => { setFilter(status); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>}>
+      <Section title="Order & delivery management" actions={<div className="flex flex-wrap gap-2">{["all", "pending", "payment", "packing", "shipping", "out_for_delivery", "delivered", "rejected"].map((status) => <button key={status} onClick={() => { setFilter(status); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === status ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{status.replaceAll("_", " ")}</button>)}</div>}>
         {visible.length ? (
           <>
             <div className="space-y-4">
@@ -2110,7 +2232,7 @@ import { formatTitleCase } from "../utils/textFormatter";
                         {o.status === "pending" ? (
                           <>
                             <Button disabled={!ready || isApproving} onClick={() => approveOrder(o.id)}>
-                              {isApproving ? "Approving..." : "Approve Order"}
+                              {isApproving ? "Accepting..." : "Accept & Request Payment"}
                             </Button>
                             <Button variant="ghost" disabled={isApproving} onClick={() => updateOrder(o.id, "rejected")}>Reject</Button>
                           </>
@@ -2125,6 +2247,11 @@ import { formatTitleCase } from "../utils/textFormatter";
                         {["packingDate", "shippingDate", "outForDeliveryDate", "deliveredDate"].map((key) => (
                           <TextField key={key} label={key.replace(/([A-Z])/g, " $1")} type="date" value={schedule[key] || ""} onChange={(e) => setSchedule(o.id, key, e.target.value)} />
                         ))}
+                      </div>
+                    )}
+                    {o.status === "payment" && (
+                      <div className="mt-4 rounded-md bg-purple-50 border border-purple-200 p-3 text-xs font-semibold text-purple-700">
+                        Order Accepted. Payment request has been sent to Dealer Sales & Finance Manager. Once payment is completed by dealer and verified by Organization Finance Manager, order will automatically move to Packing.
                       </div>
                     )}
                     {o.status === "approved" && (
@@ -2152,7 +2279,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     );
   }
 
-  function FinanceTable({ rows = [], dealers = [], filter, setFilter, sendReminder }) {
+  function FinanceTable({ rows = [], dealers = [], filter, setFilter, sendReminder, confirmPayment }) {
     const [methodFilter, setMethodFilter] = useState("all");
     const [dealerFilter, setDealerFilter] = useState("");
     const [search, setSearch] = useState("");
@@ -2161,7 +2288,13 @@ import { formatTitleCase } from "../utils/textFormatter";
     const dealerName = (id) => dealers.find((d) => d.id === id)?.dealerName || `Dealer #${id}`;
     const pageSize = 10;
     const visible = rows.filter((payment) => {
-      const statusMatch = filter === "all" || (filter === "unpaid" ? payment.paymentStatus === "pending" : filter === "paid" ? payment.paymentStatus === "paid" : payment.paymentStatus === filter);
+      const statusMatch = filter === "all" || (
+        filter === "unpaid" ? (payment.paymentStatus === "pending" || payment.paymentStatus === "under_review") :
+        filter === "under_review" ? payment.paymentStatus === "under_review" :
+        filter === "pending" ? payment.paymentStatus === "pending" :
+        filter === "paid" ? payment.paymentStatus === "paid" :
+        payment.paymentStatus === filter
+      );
       const methodMatch = methodFilter === "all" || payment.paymentMethod === methodFilter;
       const dealerMatch = !dealerFilter || String(payment.dealerId) === String(dealerFilter);
       const haystack = `${payment.invoiceNumber || ""} ${payment.Order?.orderNumber || payment.orderNumber || ""} ${payment.Dealer?.dealerName || dealerName(payment.dealerId)} ${payment.Order?.items?.map(orderItemLabel).join(" ") || payment.productSummary || ""}`.toLowerCase();
@@ -2188,7 +2321,7 @@ import { formatTitleCase } from "../utils/textFormatter";
     return (
       <>
         <Section title="Dealer-wise payment list" actions={actions}>
-          <div className="mb-4 flex flex-wrap gap-2">{["all", "unpaid", "paid"].map((tab) => <button key={tab} onClick={() => { setFilter(tab); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === tab ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{tab}</button>)}</div>
+          <div className="mb-4 flex flex-wrap gap-2">{["all", "under_review", "pending", "paid"].map((tab) => <button key={tab} onClick={() => { setFilter(tab); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === tab ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{tab.replaceAll("_", " ")}</button>)}</div>
           {pageRows.length ? <>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full min-w-[900px] text-left text-sm">
@@ -2201,7 +2334,24 @@ import { formatTitleCase } from "../utils/textFormatter";
                     <td className="px-4 py-3"><PaymentBadge value={payment.paymentStatus} /></td>
                     <td className="px-4 py-3"><PaymentBadge value={payment.paymentMethod || "not selected"} /></td>
                     <td className="px-4 py-3 text-xs text-slate-600">{payment.paymentStatus === "paid" ? (payment.paidAt ? new Date(payment.paidAt).toLocaleDateString() : "Paid") : `${payment.daysUnpaid || 0} days unpaid`}</td>
-                    <td className="px-4 py-3"><div className="flex flex-wrap gap-2"><Button className="min-h-9 px-3 py-1.5 text-xs" variant="soft" onClick={() => setSelected(payment)}>View invoice</Button>{payment.paymentStatus === "pending" && <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => sendReminder(payment.id)}>Reminder</Button>}</div></td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button className="min-h-9 px-3 py-1.5 text-xs" variant="soft" onClick={() => setSelected(payment)}>View invoice</Button>
+                        {payment.paymentStatus === "under_review" && confirmPayment && (
+                          <Button className="min-h-9 px-3 py-1.5 text-xs bg-emerald-600 text-white hover:bg-emerald-700 border-none font-bold shadow-sm" onClick={() => confirmPayment(payment.id)}>
+                            Payment Confirmed
+                          </Button>
+                        )}
+                        {payment.paymentStatus === "pending" && (
+                          <>
+                            <span className="inline-flex items-center rounded-md bg-amber-50 border border-amber-200 px-2 py-1 text-[11px] font-semibold text-amber-700">
+                              Waiting for Dealer Payment
+                            </span>
+                            <Button className="min-h-9 px-3 py-1.5 text-xs" variant="ghost" onClick={() => sendReminder(payment.id)}>Reminder</Button>
+                          </>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -2209,12 +2359,12 @@ import { formatTitleCase } from "../utils/textFormatter";
             <PaginationControls page={safePage} setPage={setPage} totalPages={totalPages} totalItems={visible.length} pageSize={pageSize} />
           </> : <Empty text="No payment invoices match these filters" />}
         </Section>
-        {selected && <InvoiceDetailsModal payment={selected} dealerName={dealerName} sendReminder={sendReminder} onClose={() => setSelected(null)} />}
+        {selected && <InvoiceDetailsModal payment={selected} dealerName={dealerName} sendReminder={sendReminder} confirmPayment={confirmPayment} onClose={() => setSelected(null)} />}
       </>
     );
   }
 
-  function InvoiceDetailsModal({ payment, dealerName, sendReminder, onClose }) {
+  function InvoiceDetailsModal({ payment, dealerName, sendReminder, confirmPayment, onClose }) {
     const items = payment.Order?.items || [];
     const detailRows = [
       ["Invoice", payment.invoiceNumber || `INV-${payment.id}`],
@@ -2229,7 +2379,7 @@ import { formatTitleCase } from "../utils/textFormatter";
       ["Transaction", payment.transactionId || "-"]
     ];
     return (
-      <ProductModalShell title={`Invoice ${payment.invoiceNumber || `INV-${payment.id}`}`} onClose={onClose} footer={<>{payment.invoiceFile && <a className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-indigo-700" href={fileUrl(payment.invoiceFile)} target="_blank">Open invoice file</a>}{payment.paymentStatus === "pending" && <Button variant="ghost" onClick={() => sendReminder(payment.id)}>Send Reminder</Button>}<Button onClick={onClose}>Close</Button></>}>
+      <ProductModalShell title={`Invoice ${payment.invoiceNumber || `INV-${payment.id}`}`} onClose={onClose} footer={<>{payment.invoiceFile && <a className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-indigo-700" href={fileUrl(payment.invoiceFile)} target="_blank">Open invoice file</a>}{payment.paymentStatus === "under_review" && confirmPayment && <Button className="bg-emerald-600 text-white hover:bg-emerald-700 font-bold" onClick={() => { confirmPayment(payment.id); onClose(); }}>Payment Confirmed</Button>}{payment.paymentStatus === "pending" && <span className="text-xs text-amber-700 font-semibold bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">Dealer has not submitted payment mode yet</span>}{payment.paymentStatus === "pending" && <Button variant="ghost" onClick={() => sendReminder(payment.id)}>Send Reminder</Button>}<Button onClick={onClose}>Close</Button></>}>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {detailRows.map(([label, value]) => <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words font-semibold text-slate-950">{value}</p></div>)}
         </div>
@@ -2261,9 +2411,122 @@ import { formatTitleCase } from "../utils/textFormatter";
   function AdminChat({ data = {}, form, setForm, sendMessage }) {
     const dealers = data.dealers || [];
     const messages = data.messages || [];
+    const messagesEndRef = useRef(null);
+
+    // Sort dealers with the latest message at the top so newest chat is first
+    const sortedDealers = useMemo(() => {
+      const getLatestTime = (dealerId) => {
+        const dealerMsgs = messages.filter((m) => String(m.dealerId) === String(dealerId));
+        if (!dealerMsgs.length) return 0;
+        return new Date(dealerMsgs[dealerMsgs.length - 1].createdAt || 0).getTime();
+      };
+      return [...dealers].sort((a, b) => getLatestTime(b.id) - getLatestTime(a.id));
+    }, [dealers, messages]);
+
+    // Newest chat should open first: auto-select the dealer with the latest message on initial open
+    useEffect(() => {
+      if (form.dealerId === "" && sortedDealers.length > 0) {
+        const hasAnyDealerMsg = messages.some((m) => m.dealerId);
+        if (hasAnyDealerMsg && sortedDealers[0]) {
+          setForm((prev) => ({ ...prev, dealerId: String(sortedDealers[0].id) }));
+        }
+      }
+    }, [sortedDealers, form.dealerId]);
+
     const selected = form.dealerId || "";
-    const visible = messages.filter((m) => selected ? String(m.dealerId) === String(selected) : m.conversationId?.endsWith("-all"));
-    return <div className="grid gap-4 lg:grid-cols-[280px_1fr]"><Section title="Dealers"><button onClick={() => setForm({ ...form, dealerId: "" })} className={`mb-2 w-full rounded-md px-3 py-2 text-left text-sm ${selected === "" ? "bg-cyan-50 text-brand" : "hover:bg-slate-50"}`}>All Dealers</button>{dealers.map((d) => { const latest = messages.filter((m) => m.dealerId === d.id).at(-1); return <button key={d.id} onClick={() => setForm({ ...form, dealerId: String(d.id) })} className={`mb-2 w-full rounded-md px-3 py-2 text-left text-sm ${String(selected) === String(d.id) ? "bg-cyan-50 text-brand" : "hover:bg-slate-50"}`}><span className="block font-semibold">{d.dealerName}</span><span className="block truncate text-xs text-slate-500">{latest?.message || "No messages yet"}</span></button>; })}</Section><Section title="Chat window"><div className="mb-4 h-80 space-y-3 overflow-y-auto rounded-md bg-slate-50 p-4">{visible.length ? visible.map((m) => <div key={m.id} className={`flex ${m.sender?.role === "ADMIN" ? "justify-end" : "justify-start"}`}><div className={`max-w-[78%] rounded-md px-3 py-2 text-sm ${m.sender?.role === "ADMIN" ? "bg-brand text-white" : "bg-white border border-slate-200"}`}><p>{m.message}</p><p className="mt-1 text-[11px] opacity-75">{new Date(m.createdAt).toLocaleString()}</p></div></div>) : <Empty text="No messages in this conversation" />}</div><form onSubmit={(e) => { e.preventDefault(); sendMessage({ ...form, dealerId: form.dealerId || null, title: "Message" }); }} className="flex gap-2"><input className="flex-1 rounded-md border border-slate-300 px-3 py-2" value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} placeholder="Type a message" required /><Button>Send</Button></form></Section></div>;
+    const visible = useMemo(() => {
+      return messages.filter((m) => selected ? String(m.dealerId) === String(selected) : (m.conversationId?.endsWith("-all") || !m.dealerId));
+    }, [messages, selected]);
+
+    // Auto-scroll chat window to bottom on new message
+    useEffect(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [visible.length]);
+
+    return (
+      <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+        <Section title="Dealers">
+          <div className="max-h-[500px] overflow-y-auto space-y-1 pr-1">
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, dealerId: "" })}
+              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition ${selected === "" ? "bg-cyan-50 font-bold text-brand" : "hover:bg-slate-50 text-slate-700"}`}
+            >
+              All Dealers (Broadcast)
+            </button>
+            {sortedDealers.map((d) => {
+              const dMsgs = messages.filter((m) => m.dealerId === d.id);
+              const latest = dMsgs.at(-1);
+              const isSelected = String(selected) === String(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setForm({ ...form, dealerId: String(d.id) })}
+                  className={`w-full rounded-lg px-3 py-2.5 text-left text-sm transition ${isSelected ? "bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold" : "hover:bg-slate-50 text-slate-700"}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="block font-semibold truncate">{d.dealerName}</span>
+                    {latest?.createdAt && (
+                      <span className="text-[10px] text-slate-400 shrink-0">
+                        {new Date(latest.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    )}
+                  </div>
+                  <span className="mt-0.5 block truncate text-xs text-slate-500">
+                    {latest?.message || "No messages yet"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Section>
+        <Section title="Chat window">
+          <div className="mb-4 h-96 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-4 border border-slate-200/80">
+            {visible.length ? (
+              visible.map((m) => {
+                const isMine = m.sender?.role === "ADMIN" || m.sender?.role === "ADMIN_CEO" || m.title === "Message";
+                return (
+                  <div key={m.id} className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm shadow-xs break-words break-all whitespace-pre-wrap overflow-hidden ${isMine ? "bg-brand text-white" : "border border-slate-200 bg-white text-slate-900"}`}>
+                      <p className="break-words break-all whitespace-pre-wrap overflow-hidden leading-relaxed">{m.message}</p>
+                      {m.messageType === "stock_request" && (
+                        <p className="mt-1.5 rounded-md bg-black/10 px-2 py-1 text-[11px] font-medium">
+                          Stock Request: Requested {m.requestedQuantity}, available stock: {m.availableStock}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[11px] opacity-75 text-right">
+                        {new Date(m.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <Empty text="No messages in this conversation" />
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!form.message?.trim()) return;
+              sendMessage({ ...form, dealerId: form.dealerId || null, title: "Message" });
+            }}
+            className="flex gap-2"
+          >
+            <input
+              className="flex-1 rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-cyan-100"
+              value={form.message || ""}
+              onChange={(e) => setForm({ ...form, message: e.target.value })}
+              placeholder="Type a message..."
+              required
+            />
+            <Button type="submit">Send</Button>
+          </form>
+        </Section>
+      </div>
+    );
   }
 
   function Composer({ title, form, setForm, submit, rows, cols }) {

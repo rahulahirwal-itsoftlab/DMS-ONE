@@ -30,16 +30,21 @@ const migrateMissingColumns = require("./utils/migrateMissingColumns");
 const addPerformanceIndexes = require("./utils/addPerformanceIndexes");
 const { ensureSuperAdminAccount } = require("./utils/ensureSuperAdminAccount");
 const { startScheduledMessagesJob } = require("./jobs/scheduledMessagesJob");
+const { initWebSocketServer } = require("./services/websocketService");
 
 const PORT = process.env.PORT || 5000;
 
+const HOST = process.env.HOST || "0.0.0.0";
+
 // 1. Immediately bind HTTP port so requests never receive ERR_CONNECTION_REFUSED
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`=========================================`);
-  console.log(`  DMS API listening on http://localhost:${PORT}`);
+  console.log(`  DMS API listening on http://${HOST}:${PORT}`);
   console.log(`  Process ID: ${process.pid}`);
   console.log(`=========================================`);
 });
+
+initWebSocketServer(server);
 
 // 2. Perform DB initialization and migrations asynchronously in background
 (async () => {

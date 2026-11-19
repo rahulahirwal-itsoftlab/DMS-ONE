@@ -1,8 +1,10 @@
 const asyncHandler = require("../utils/asyncHandler");
+const { Op } = require("sequelize");
 const { User, Company, Dealer } = require("../models");
 const { sendPasswordChangeOtpEmail } = require("../utils/mailService");
 const { publicPath } = require("../middleware/upload");
 const cloudinaryService = require("../services/cloudinaryService");
+const cacheService = require("../services/cacheService");
 
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
@@ -44,7 +46,8 @@ exports.me = asyncHandler(async (req, res) => {
 
 exports.updateMe = asyncHandler(async (req, res) => {
   const user = await User.findByPk(req.user.id);
-  const { name, phone, ownerName } = req.body;
+  if (!user) return res.status(404).json({ message: "User not found" });
+  const { name, email, phone, ownerName } = req.body;
 
   if (name !== undefined) {
     const trimmed = String(name || "").trim();
@@ -52,8 +55,33 @@ exports.updateMe = asyncHandler(async (req, res) => {
     user.name = trimmed;
   }
 
+  if (email !== undefined) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    if (!cleanEmail) return res.status(400).json({ message: "Email is required" });
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ message: "Please provide a valid email address" });
+    }
+    if (cleanEmail !== user.email) {
+      const existing = await User.findOne({ where: { email: cleanEmail, id: { [Op.ne]: user.id } } });
+      if (existing) {
+        return res.status(400).json({ message: "Email is already in use by another account" });
+      }
+      user.email = cleanEmail;
+    }
+  }
+
   if (phone !== undefined) {
-    user.phone = String(phone || "").trim() || null;
+    const rawPhone = String(phone || "").trim();
+    if (rawPhone) {
+      const digits = rawPhone.replace(/\D/g, "");
+      if (digits.length !== 10) {
+        return res.status(400).json({ message: "Phone number must be exactly 10 digits" });
+      }
+      user.phone = digits;
+    } else {
+      user.phone = null;
+    }
   }
 
   if (req.file) {
@@ -70,17 +98,22 @@ exports.updateMe = asyncHandler(async (req, res) => {
 
   await user.save();
 
-  if (user.dealerId && (phone !== undefined || ownerName !== undefined)) {
+  if (user.dealerId) {
     const dealer = await Dealer.findOne({ where: { id: user.dealerId, companyId: user.companyId } });
     if (dealer) {
       const updates = {};
-      if (phone !== undefined) updates.phone = phone;
+      if (user.phone !== undefined) updates.phone = user.phone;
+      if (user.email !== undefined) updates.email = user.email;
       if (ownerName !== undefined && String(ownerName || "").trim()) updates.ownerName = String(ownerName).trim();
       if (Object.keys(updates).length) await dealer.update(updates);
     }
   }
 
-  res.json({ message: "Profile updated", ...(await profilePayload(await User.findByPk(user.id))) });
+  if (cacheService && typeof cacheService.del === "function") {
+    cacheService.del(cacheService.key("global", "auth_user", user.id));
+  }
+
+  res.json({ message: "Profile updated successfully", ...(await profilePayload(await User.findByPk(user.id))) });
 });
 
 exports.sendPasswordOtp = asyncHandler(async (req, res) => {

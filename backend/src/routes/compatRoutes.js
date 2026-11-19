@@ -14,11 +14,12 @@ router.get("/delivery/admin", protect, permit("ADMIN"), admin.delivery);
 router.get("/delivery/dealer", protect, permit("DEALER"), dealer.delivery);
 router.patch("/delivery/:orderId/status", protect, permit("ADMIN"), admin.updateOrderStatus);
 
-router.get("/finance/admin/approved-orders", protect, permit("ADMIN"), admin.approvedOrdersForPayment);
-router.post("/finance/admin/send-payment-request/:orderId", protect, permit("ADMIN"), invoiceUpload.single("invoice"), admin.sendPaymentRequest);
-router.get("/finance/admin/payments", protect, permit("ADMIN"), admin.financeSummary);
-router.get("/finance/dealer/payments", protect, permit("DEALER"), dealer.finance);
-router.post("/finance/dealer/pay/:paymentId", protect, permit("DEALER"), dealer.pay);
+router.get("/finance/admin/approved-orders", protect, permit("ADMIN", "FINANCE_MANAGER"), admin.approvedOrdersForPayment);
+router.post("/finance/admin/send-payment-request/:orderId", protect, permit("ADMIN", "FINANCE_MANAGER"), invoiceUpload.single("invoice"), admin.sendPaymentRequest);
+router.get("/finance/admin/payments", protect, permit("ADMIN", "FINANCE_MANAGER"), admin.financeSummary);
+router.post("/finance/admin/confirm-payment/:paymentId", protect, permit("ADMIN", "FINANCE_MANAGER"), admin.confirmPayment);
+router.get("/finance/dealer/payments", protect, permit("DEALER", "DEALER_SALES_FINANCE_MANAGER"), dealer.finance);
+router.post("/finance/dealer/pay/:paymentId", protect, permit("DEALER", "DEALER_SALES_FINANCE_MANAGER"), dealer.pay);
 
 router.get("/messages/admin/conversations", protect, permit("ADMIN"), admin.adminConversations);
 router.get("/messages/dealer/conversation", protect, permit("DEALER"), dealer.conversation);

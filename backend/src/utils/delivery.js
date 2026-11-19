@@ -1,9 +1,10 @@
 const progressByStatus = {
   pending: 0,
-  approved: 10,
-  packing: 25,
-  shipping: 50,
-  out_for_delivery: 75,
+  payment: 15,
+  approved: 15,
+  packing: 35,
+  shipping: 60,
+  out_for_delivery: 80,
   delivered: 100,
   rejected: 0,
   cancelled: 0
@@ -17,7 +18,7 @@ function progressForStatus(status) {
 
 function activeDeliveryStep(status) {
   if (deliverySteps.includes(status)) return status;
-  if (status === "approved") return "packing";
+  if (status === "approved" || status === "payment") return "packing";
   return status;
 }
 

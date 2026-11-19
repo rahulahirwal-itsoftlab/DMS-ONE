@@ -40,6 +40,12 @@ export default function SuperAdmin() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [editError, setEditError] = useState("");
+
+  const openEdit = (org) => {
+    setEditError("");
+    setEditing(org ? { ...org } : null);
+  };
   const [recentlyCreated, setRecentlyCreated] = useState(null);
 
   const selectTab = (tab) => navigate(`/super-admin/${tab}`);
@@ -75,15 +81,28 @@ export default function SuperAdmin() {
     finally { setSaving(false); }
   };
 
-  const update = async (event) => {
-    event.preventDefault(); setSaving(true); setError("");
+  const update = async (formData) => {
+    setSaving(true);
+    setEditError("");
+    setError("");
     try {
-      await api.put(`/super-admin/organizations/${editing.id}`, editing);
+      const payload = {
+        ...formData,
+        numberOfLicenses: Number(formData.numberOfLicenses),
+        startDate: formData.startDate ? String(formData.startDate).slice(0, 10) : undefined,
+        endDate: formData.endDate ? String(formData.endDate).slice(0, 10) : null
+      };
+      const { data } = await api.put(`/super-admin/organizations/${formData.id}`, payload);
       setEditing(null);
-      setMessage("Organization updated successfully");
+      setMessage(`Organization "${data.companyName || formData.companyName}" updated successfully`);
       await load();
-    } catch (err) { setError(err.response?.data?.message || "Unable to update organization"); }
-    finally { setSaving(false); }
+    } catch (err) {
+      const msg = err.response?.data?.message || "Unable to update organization";
+      setEditError(msg);
+      setError(msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const setStatus = async (organization) => {
@@ -102,7 +121,7 @@ export default function SuperAdmin() {
       {message && <Notice tone="success">{message}</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       {loading ? <Loading /> : <>
-        {activeTab === "dashboard" && <Dashboard dashboard={dashboard} onCreate={() => selectTab("create-organization")} onEdit={setEditing} />}
+        {activeTab === "dashboard" && <Dashboard dashboard={dashboard} onCreate={() => selectTab("create-organization")} onEdit={openEdit} />}
         {activeTab === "create-organization" && <OrganizationForm form={form} setForm={setForm} onSubmit={submit} saving={saving} />}
         {activeTab === "organizations" && (
           <Organizations
@@ -112,7 +131,7 @@ export default function SuperAdmin() {
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
             onView={setSelected}
-            onEdit={setEditing}
+            onEdit={openEdit}
             onStatus={setStatus}
             onDelete={setConfirmDelete}
             recentlyCreated={recentlyCreated}
@@ -121,7 +140,7 @@ export default function SuperAdmin() {
         )}
       </>}
       <DetailsModal organization={selected} onClose={() => setSelected(null)} />
-      <EditModal organization={editing} setOrganization={setEditing} onSubmit={update} saving={saving} />
+      <EditModal organization={editing} setOrganization={setEditing} onSubmit={update} saving={saving} error={editError} />
       <ConfirmModal open={!!confirmDelete} title="Archive organization?" description={`${confirmDelete?.companyName || "This organization"} will be deactivated and hidden. Historical records will be preserved.`} danger confirmText="Archive" onConfirm={remove} onClose={() => setConfirmDelete(null)} />
     </Layout>
   );
@@ -293,11 +312,69 @@ function DetailsModal({ organization, onClose }) {
   return <ModalShell title="Organization details" onClose={onClose}><div className="grid gap-3 sm:grid-cols-2">{rows.map(([label, value]) => <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 break-words font-medium text-slate-900">{String(value)}</p></div>)}</div></ModalShell>;
 }
 
-function EditModal({ organization, setOrganization, onSubmit, saving }) {
+function EditModal({ organization, setOrganization, onSubmit, saving, error }) {
   if (!organization) return null;
-  const field = (key, label, props = {}) => <TextField label={label} value={organization[key] || ""} onChange={(e) => setOrganization({ ...organization, [key]: e.target.value })} {...props} />;
-  return <ModalShell wide title="Edit organization" onClose={() => setOrganization(null)} footer={<><Button variant="ghost" onClick={() => setOrganization(null)}>Cancel</Button><Button type="submit" form="edit-organization" disabled={saving}>{saving ? "Saving..." : "Save changes"}</Button></>}><FormGrid id="edit-organization" onSubmit={onSubmit} className="grid gap-4 md:grid-cols-2">
-    {field("orgId", "Organization ID", { required: true })}{field("numberOfLicenses", "Number of licenses", { type: "number", min: 1, step: 1, required: true })}{field("companyName", "Organization name", { required: true })}{field("category", "Category", { required: true })}{field("phone", "Organization phone")}{field("address", "Address")}{field("city", "City")}{field("state", "State")}{field("pincode", "Pincode")}{field("startDate", "Start date", { type: "date", required: true })}{field("endDate", "End date", { type: "date", required: true })}{field("adminName", "Admin CEO name", { required: true })}{field("adminPhone", "Admin CEO phone")}{field("adminEmail", "Admin CEO email", { type: "email", required: true })}<Select label="Status" value={organization.status} onChange={(e) => setOrganization({ ...organization, status: e.target.value })}><option value="active">Active</option><option value="inactive">Inactive</option></Select></FormGrid></ModalShell>;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmit(organization);
+  };
+
+  const field = (key, label, props = {}) => {
+    const val = props.type === "date"
+      ? (organization[key] ? String(organization[key]).slice(0, 10) : "")
+      : (organization[key] ?? "");
+    return (
+      <TextField
+        label={label}
+        value={val}
+        onChange={(e) => setOrganization({ ...organization, [key]: e.target.value })}
+        {...props}
+      />
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-auto rounded-xl bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-950">Edit organization</h2>
+          <button type="button" onClick={() => setOrganization(null)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="p-5">
+            {error && <Notice tone="error">{error}</Notice>}
+            <div className="grid gap-4 md:grid-cols-2">
+              {field("orgId", "Organization ID", { required: true })}
+              {field("numberOfLicenses", "Number of licenses", { type: "number", min: 1, step: 1, required: true })}
+              {field("companyName", "Organization name", { required: true })}
+              {field("category", "Category", { required: true })}
+              {field("phone", "Organization phone", { type: "tel" })}
+              {field("address", "Address")}
+              {field("city", "City")}
+              {field("state", "State")}
+              {field("pincode", "Pincode")}
+              {field("startDate", "Start date", { type: "date", required: true })}
+              {field("endDate", "End date", { type: "date" })}
+              {field("adminName", "Admin CEO name", { required: true })}
+              {field("adminPhone", "Admin CEO phone", { type: "tel" })}
+              {field("adminEmail", "Admin CEO email", { type: "email", required: true })}
+              <Select label="Status" value={organization.status || "active"} onChange={(e) => setOrganization({ ...organization, status: e.target.value })}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </Select>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+            <Button type="button" variant="ghost" onClick={() => setOrganization(null)}>Cancel</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save changes"}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 function Notice({ tone, children }) { return <div className={`mb-4 rounded-lg border p-3 text-sm font-semibold ${tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>{children}</div>; }

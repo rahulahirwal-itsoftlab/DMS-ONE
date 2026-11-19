@@ -59,7 +59,7 @@ export default function DealerManagement({ onChanged }) {
     if (!/^\S+@\S+\.\S+$/.test(form.email)) errors.email = "Enter a valid email address";
     if (!form.password || form.password.length < 6) errors.password = "Password must be at least 6 characters";
     if (form.password !== form.confirmPassword) errors.confirmPassword = "Passwords do not match";
-    if (form.pincode && !/^\d{6}$/.test(form.pincode)) errors.pincode = "Pincode must be 6 digits";
+    if (!form.pincode || !/^\d{6}$/.test(String(form.pincode).trim())) errors.pincode = "Pincode must be exactly 6 digits";
     setFormErrors(errors);
     return !Object.keys(errors).length;
   };
@@ -133,7 +133,7 @@ export default function DealerManagement({ onChanged }) {
           <DealerField field="city" label="City" form={form} setForm={setForm} errors={formErrors} />
           <DealerField field="state" label="State" form={form} setForm={setForm} errors={formErrors} />
           <DealerField field="address" label="Address" form={form} setForm={setForm} errors={formErrors} />
-          <DealerField field="pincode" label="Pincode" inputMode="numeric" maxLength={6} form={form} setForm={setForm} errors={formErrors} />
+          <DealerField field="pincode" label="Pincode" required inputMode="numeric" maxLength={6} pattern="\d{6}" title="Pincode must be exactly 6 digits" form={form} setForm={setForm} errors={formErrors} />
         </FormSection>
         <FormSection title="Account Information">
           <Select label="Status" value={form.status} onChange={(event) => setForm({ ...form, status: event.target.value })}><option value="active">Active</option><option value="inactive">Inactive</option><option value="blocked">Blocked</option></Select>
@@ -170,7 +170,15 @@ export default function DealerManagement({ onChanged }) {
 }
 
 function FormSection({ title, children }) { return <div className="rounded-xl border border-slate-200 bg-stone-50/60 p-4"><h3 className="mb-4 font-semibold text-slate-900">{title}</h3><div className="grid gap-4 md:grid-cols-2">{children}</div></div>; }
-function DealerField({ field, label, required, form, setForm, errors, ...props }) { return <div><TextField label={<>{label}{required && <span className="text-rose-500"> *</span>}</>} value={form[field]} onChange={(event) => setForm({ ...form, [field]: event.target.value })} required={required} {...props} />{errors[field] && <p className="mt-1 text-xs font-medium text-rose-600">{errors[field]}</p>}</div>; }
+function DealerField({ field, label, required, form, setForm, errors, ...props }) {
+  const handleChange = (event) => {
+    let val = event.target.value;
+    if (field === "pincode") val = val.replace(/\D/g, "").slice(0, 6);
+    if (field === "phone") val = val.replace(/\D/g, "").slice(0, 10);
+    setForm({ ...form, [field]: val });
+  };
+  return <div><TextField label={<>{label}{required && <span className="text-rose-500"> *</span>}</>} value={form[field]} onChange={handleChange} required={required} {...props} />{errors[field] && <p className="mt-1 text-xs font-medium text-rose-600">{errors[field]}</p>}</div>;
+}
 function PasswordField({ field, label, value, show, toggle, onChange, error }) { return <div><label className="block text-sm font-semibold text-slate-600">{label} <span className="text-rose-500">*</span></label><div className="relative mt-1"><input name={field} type={show ? "text" : "password"} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-3 py-2.5 pr-10 text-sm outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100" required /><button type="button" onClick={toggle} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" aria-label={show ? "Hide password" : "Show password"}>{show ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>{error && <p className="mt-1 text-xs font-medium text-rose-600">{error}</p>}</div>; }
 function FilterInput({ label, value, onChange }) { return <TextField label={label} value={value} onChange={(event) => onChange(event.target.value)} placeholder={`Search by ${label.toLowerCase()}`} />; }
 function ActionButton({ label, children, onClick, danger }) { return <button type="button" onClick={onClick} className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-xs font-semibold whitespace-nowrap transition ${danger ? "border-rose-200 text-rose-600 hover:bg-rose-50" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{children}{label}</button>; }

@@ -148,6 +148,33 @@ const columns = {
 
 async function migrateMissingColumns() {
   const queryInterface = sequelize.getQueryInterface();
+
+  // Ensure Postgres enums contain new payment workflow statuses
+  try {
+    await sequelize.query(`
+      DO $$
+      BEGIN
+        BEGIN
+          ALTER TYPE "enum_Orders_status" ADD VALUE IF NOT EXISTS 'payment';
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+        BEGIN
+          ALTER TYPE "enum_orders_status" ADD VALUE IF NOT EXISTS 'payment';
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+        BEGIN
+          ALTER TYPE "enum_Payments_paymentStatus" ADD VALUE IF NOT EXISTS 'under_review';
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+        BEGIN
+          ALTER TYPE "enum_payments_paymentStatus" ADD VALUE IF NOT EXISTS 'under_review';
+        EXCEPTION WHEN OTHERS THEN NULL;
+        END;
+      END $$;
+    `);
+  } catch (err) {
+    console.warn("[Migration] Enum update notice:", err.message);
+  }
   const userTable = await queryInterface.describeTable("Users").catch(() => null);
   if (userTable) {
     await queryInterface.changeColumn("Users", "role", {

@@ -21,11 +21,13 @@ const {
   DealerCreditTransaction,
   CreditReward,
   CreditRedemption,
-  Dealer
+  Dealer,
+  User
 } = require("../models");
 const { progressForStatus, activeDeliveryStep, daysUntil } = require("../utils/delivery");
 const { awardCreditCoinsForPayment, getOrCreateWallet } = require("../utils/credit");
 const cacheService = require("../services/cacheService");
+const { broadcastChatMessage } = require("../services/websocketService");
 
 function daysUnpaid(payment) {
   if (payment.paymentStatus === "paid") return 0;
@@ -238,7 +240,11 @@ exports.stockRequest = asyncHandler(async (req, res) => {
     availableStock,
     isRead: false
   });
-  res.status(201).json({ message, productName: product.productName });
+  const fullMessage = await Message.findByPk(message.id, {
+    include: [{ model: User, as: "sender", attributes: ["id", "name", "role"] }]
+  });
+  broadcastChatMessage(fullMessage || message);
+  res.status(201).json({ message: fullMessage || message, productName: product.productName });
 });
 
 exports.inventory = asyncHandler(async (req, res) => {
@@ -375,38 +381,52 @@ exports.finance = asyncHandler(async (req, res) => {
     include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }, Dealer],
     order: [["createdAt", "DESC"]]
   })).map((payment) => ({ ...payment.toJSON(), daysUnpaid: daysUnpaid(payment) })).sort((a, b) => {
-    if (a.paymentStatus === "pending" && b.paymentStatus === "pending") return b.daysUnpaid - a.daysUnpaid || new Date(b.createdAt) - new Date(a.createdAt);
-    if (a.paymentStatus === "pending") return -1;
-    if (b.paymentStatus === "pending") return 1;
+    const isUnsettled = (s) => s === "pending" || s === "under_review";
+    if (isUnsettled(a.paymentStatus) && isUnsettled(b.paymentStatus)) {
+      if (a.paymentStatus === "under_review" && b.paymentStatus !== "under_review") return -1;
+      if (b.paymentStatus === "under_review" && a.paymentStatus !== "under_review") return 1;
+      return b.daysUnpaid - a.daysUnpaid || new Date(b.createdAt) - new Date(a.createdAt);
+    }
+    if (isUnsettled(a.paymentStatus)) return -1;
+    if (isUnsettled(b.paymentStatus)) return 1;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
   res.json(payments);
 });
 
 exports.pay = asyncHandler(async (req, res) => {
-  const { paymentMethod } = req.body;
-  if (!["online", "cash"].includes(paymentMethod)) return res.status(400).json({ message: "paymentMethod must be online or cash" });
-  const payment = await Payment.findOne({ where: { id: req.params.paymentId, ...scope(req), paymentStatus: "pending" } });
-  if (!payment) return res.status(404).json({ message: "Pending payment request not found" });
+  const method = String(req.body.paymentMethod || "").trim().toLowerCase();
+  const allowed = ["online", "cash", "upi", "card", "bank_transfer", "net_banking"];
+  if (!allowed.includes(method)) return res.status(400).json({ message: "paymentMethod must be online, cash, or upi" });
+  
+  const payment = await Payment.findOne({ where: { id: req.params.paymentId, ...scope(req) } });
+  if (!payment) return res.status(404).json({ message: "Payment request not found" });
+  if (payment.paymentStatus === "paid") return res.status(400).json({ message: "This payment has already been verified and paid" });
+  if (payment.paymentStatus === "under_review") return res.status(400).json({ message: "Payment has already been submitted and is under review by Organization Finance Manager" });
+
+  const txnId = req.body.transactionId || (method === "cash" ? `CASH-${Date.now().toString().slice(-6)}` : `TXN-${Date.now()}`);
+
   await payment.update({
-    paymentStatus: "paid",
-    paymentMethod,
+    paymentStatus: "under_review",
+    paymentMethod: method,
     paidAt: new Date(),
     paidBy: req.user.id,
-    transactionId: paymentMethod === "online" ? `FAKE-${Date.now()}` : "CASH"
+    transactionId: txnId
   });
+
   await Message.create({
     companyId: req.user.companyId,
     senderId: req.user.id,
     receiverId: null,
     dealerId: req.user.dealerId,
     conversationId: `${req.user.companyId}-${req.user.dealerId}`,
-    title: "Payment received",
-    message: `Payment received for order #${payment.orderNumber || payment.orderId}. Amount: Rs ${payment.amount}. Method: ${paymentMethod}. Paid at ${payment.paidAt}.`,
+    title: "Payment submitted - Verification required",
+    message: `Payment submitted for order #${payment.orderNumber || payment.orderId}. Amount: Rs ${payment.amount}. Method: ${method}. Transaction ID: ${txnId}. Awaiting Organization Finance confirmation.`,
     messageType: "system_finance",
+    orderNumber: payment.orderNumber,
     isRead: false
   });
-  if (payment.orderId) await awardCreditCoinsForPayment(payment.id);
+
   res.json(await Payment.findByPk(payment.id, { include: [{ model: Order, include: [{ model: OrderItem, as: "items", include: [Product, ProductVariant] }] }] }));
 });
 
@@ -541,7 +561,11 @@ exports.reply = asyncHandler(async (req, res) => {
     message: req.body.message,
     isRead: false
   });
-  res.status(201).json(message);
+  const fullMessage = await Message.findByPk(message.id, {
+    include: [{ model: User, as: "sender", attributes: ["id", "name", "role"] }]
+  });
+  broadcastChatMessage(fullMessage || message);
+  res.status(201).json(fullMessage || message);
 });
 
 exports.createReport = asyncHandler(async (req, res) => {

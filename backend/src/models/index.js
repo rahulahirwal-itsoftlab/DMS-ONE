@@ -320,7 +320,7 @@ const Order = sequelize.define("Order", {
   companyId: { type: DataTypes.INTEGER, allowNull: false },
   dealerId: { type: DataTypes.INTEGER, allowNull: false },
   status: {
-    type: DataTypes.ENUM("pending", "approved", "rejected", "packing", "shipping", "out_for_delivery", "delivered", "cancelled"),
+    type: DataTypes.ENUM("pending", "payment", "approved", "rejected", "packing", "shipping", "out_for_delivery", "delivered", "cancelled"),
     defaultValue: "pending"
   },
   totalAmount: { type: DataTypes.DECIMAL(12, 2), defaultValue: 0 },
@@ -370,7 +370,7 @@ const Payment = sequelize.define("Payment", {
   orderApprovedAt: { type: DataTypes.DATE, allowNull: true },
   amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
   paymentMethod: DataTypes.STRING,
-  paymentStatus: { type: DataTypes.ENUM("pending", "paid", "failed"), defaultValue: "pending" },
+  paymentStatus: { type: DataTypes.ENUM("pending", "under_review", "paid", "failed"), defaultValue: "pending" },
   transactionId: DataTypes.STRING,
   invoiceFile: DataTypes.STRING,
   paymentRequestSentAt: DataTypes.DATE,

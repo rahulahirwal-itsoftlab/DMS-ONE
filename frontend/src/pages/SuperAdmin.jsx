@@ -197,24 +197,48 @@ function OrganizationForm({ form, setForm, onSubmit, saving }) {
   const change = (key, value) => {
     const nextValue = ["phone", "adminPhone", "pincode"].includes(key) ? value.replace(/\D/g, "") : value;
     setForm({ ...form, [key]: nextValue });
-    if (errors[key]) setErrors({ ...errors, [key]: "" });
+    if (errors[key]) setErrors((prev) => ({ ...prev, [key]: "" }));
   };
   const validate = () => {
     const next = {};
-    [["orgId", "Organization ID"], ["companyName", "Organization name"], ["category", "Category"], ["phone", "Organization phone"], ["numberOfLicenses", "Number of licenses"], ["startDate", "Start date"], ["endDate", "End date"], ["adminName", "Admin CEO name"], ["adminEmail", "Admin CEO email"], ["adminPhone", "Admin CEO phone"], ["password", "Password"], ["confirmPassword", "Confirm password"]].forEach(([key, label]) => {
+    [["orgId", "Organization ID"], ["companyName", "Organization name"], ["category", "Category"], ["numberOfLicenses", "Number of licenses"], ["startDate", "Start date"], ["endDate", "End date"], ["adminName", "Admin CEO name"], ["adminEmail", "Admin CEO email"]].forEach(([key, label]) => {
       if (!String(form[key] || "").trim()) next[key] = `${label} is required`;
     });
-    ["phone", "adminPhone"].forEach((key) => {
-      if (form[key] && !/^\d{7,10}$/.test(form[key])) next[key] = "Enter 7 to 10 digits only";
-    });
+
+    // Strict Phone Number validation:
+    if (!form.phone || !String(form.phone).trim()) {
+      next.phone = "Organization phone number is required";
+    } else if (!/^\d{10}$/.test(form.phone)) {
+      next.phone = "Phone number must be exactly 10 digits";
+    }
+
+    // Strict Admin Phone validation:
+    if (!form.adminPhone || !String(form.adminPhone).trim()) {
+      next.adminPhone = "Admin CEO phone number is required";
+    } else if (!/^\d{10}$/.test(form.adminPhone)) {
+      next.adminPhone = "Phone number must be exactly 10 digits";
+    }
+
     if (form.pincode && !/^\d{6}$/.test(form.pincode)) next.pincode = "Enter a valid 6-digit pincode";
     if (form.numberOfLicenses && (!Number.isInteger(Number(form.numberOfLicenses)) || Number(form.numberOfLicenses) < 1)) next.numberOfLicenses = "Enter a positive whole number";
     if (form.adminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.adminEmail)) next.adminEmail = "Enter a valid email address";
     if (form.startDate && form.startDate < today()) next.startDate = "Start date cannot be in the past";
     if (form.endDate && form.endDate < today()) next.endDate = "End date cannot be in the past";
     if (form.endDate && form.startDate && form.endDate < form.startDate) next.endDate = "End date must be on or after the start date";
-    if (form.password && form.password.length < 6) next.password = "Use at least 6 characters";
-    if (form.confirmPassword && form.confirmPassword !== form.password) next.confirmPassword = "Passwords do not match";
+
+    // Strict Password validation (minimum 6 characters):
+    if (!form.password) {
+      next.password = "Password is required";
+    } else if (form.password.length < 6) {
+      next.password = "Password must be at least 6 characters";
+    }
+
+    if (!form.confirmPassword) {
+      next.confirmPassword = "Confirm password is required";
+    } else if (form.confirmPassword !== form.password) {
+      next.confirmPassword = "Passwords do not match";
+    }
+
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -226,7 +250,7 @@ function OrganizationForm({ form, setForm, onSubmit, saving }) {
         {field("orgId", "Organization ID", { required: true, placeholder: "e.g. ORG-001" })}{field("numberOfLicenses", "Number of licenses", { type: "number", min: 1, step: 1, required: true, placeholder: "e.g. 10" })}
         {field("companyName", "Organization / company name", { required: true, placeholder: "e.g. Acme Industries" })}{field("category", "Business category", { required: true, placeholder: "e.g. Automobile" })}
         {field("description", "Description", { placeholder: "Briefly describe the organization", className: "md:col-span-2" })}
-        {field("phone", "Organization phone", { required: true, inputMode: "numeric", maxLength: 10, icon: Phone, placeholder: "Up to 10 digits" })}
+        {field("phone", "Organization phone", { required: true, inputMode: "numeric", maxLength: 10, icon: Phone, placeholder: "10-digit phone number" })}
         {field("pincode", "Pincode", { inputMode: "numeric", maxLength: 6, icon: MapPin, placeholder: "6-digit pincode" })}
         {field("address", "Street address", { placeholder: "Building, street or area", className: "md:col-span-2" })}{field("city", "City", { placeholder: "City" })}{field("state", "State", { placeholder: "State" })}
       </FormSection>
@@ -236,7 +260,7 @@ function OrganizationForm({ form, setForm, onSubmit, saving }) {
       </FormSection>
       <FormSection icon={UserRound} title="Admin CEO account" description="These credentials will be used for the primary administrator.">
         {field("adminName", "Full name", { required: true, icon: UserRound, placeholder: "Admin CEO name" })}{field("adminEmail", "Email address", { type: "email", required: true, icon: Mail, placeholder: "admin@company.com" })}
-        {field("adminPhone", "Phone number", { required: true, inputMode: "numeric", maxLength: 10, icon: Phone, placeholder: "Up to 10 digits" })}<div />
+        {field("adminPhone", "Phone number", { required: true, inputMode: "numeric", maxLength: 10, icon: Phone, placeholder: "10-digit phone number" })}<div />
         {field("password", "Password", { type: "password", minLength: 6, required: true, icon: KeyRound, placeholder: "Minimum 6 characters" })}{field("confirmPassword", "Confirm password", { type: "password", minLength: 6, required: true, icon: KeyRound, placeholder: "Re-enter password" })}
       </FormSection>
       <div className="flex flex-col-reverse items-stretch justify-between gap-3 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4 sm:flex-row sm:items-center"><p className="text-sm text-slate-600"><span className="font-semibold text-slate-900">Ready to create?</span> Review the details before submitting.</p><Button type="submit" disabled={saving} className="justify-center px-6"><Plus size={16} /> {saving ? "Creating organization..." : "Create Organization"}</Button></div>
@@ -249,7 +273,20 @@ function FormSection({ icon: Icon, title, description, children }) {
 }
 
 function FormField({ label, error, required, className, children }) {
-  return <div className={className}><div className="mb-1.5 flex items-center justify-between gap-2"><label className="text-sm font-semibold text-slate-700">{label}{required && <span className="ml-1 text-rose-500">*</span>}</label>{error && <span className="text-xs font-medium text-rose-600">{error}</span>}</div><div className={error ? "rounded-md ring-2 ring-rose-100 [&_input]:border-rose-400" : ""}>{children}</div></div>;
+  return (
+    <div className={className}>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className="text-sm font-semibold text-slate-700">
+          {label}
+          {required && <span className="ml-1 text-rose-500">*</span>}
+        </label>
+      </div>
+      <div className={error ? "rounded-lg ring-2 ring-rose-200 [&_input]:border-rose-500 [&_input]:focus:border-rose-500 [&_input]:focus:ring-rose-200 [&_select]:border-rose-500" : ""}>
+        {children}
+      </div>
+      {error && <p className="mt-1.5 text-xs font-semibold text-rose-600">{error}</p>}
+    </div>
+  );
 }
 
 function Organizations({ rows, search, setSearch, statusFilter, setStatusFilter, onView, onEdit, onStatus, onDelete, recentlyCreated, onClearRecentlyCreated }) {

@@ -25,8 +25,15 @@ const User = sequelize.define("User", {
   status: { type: DataTypes.ENUM("active", "inactive"), defaultValue: "active" }
 }, {
   hooks: {
-    beforeCreate: async (user) => { user.password = await bcrypt.hash(user.password, 12); },
+    beforeValidate: (user) => {
+      if (user.email) user.email = String(user.email).trim().toLowerCase();
+    },
+    beforeCreate: async (user) => {
+      if (user.email) user.email = String(user.email).trim().toLowerCase();
+      user.password = await bcrypt.hash(user.password, 12);
+    },
     beforeUpdate: async (user) => {
+      if (user.email) user.email = String(user.email).trim().toLowerCase();
       if (user.changed("password")) user.password = await bcrypt.hash(user.password, 12);
     }
   }

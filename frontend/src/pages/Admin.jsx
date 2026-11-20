@@ -1477,7 +1477,7 @@ import { useChatSocket } from "../utils/useSocket";
     return (
       <Section title="Internal Updates" actions={<div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={markAll}>Mark all as read</Button><Button variant="danger" onClick={clearRead}>Clear read updates</Button></div>}>
         <div className="mb-4 flex flex-wrap gap-2">{["all", "unread", "read", "low_stock"].map((f) => <button key={f} onClick={() => { setFilter(f); setPage(1); }} className={`rounded-full px-3 py-1 text-sm font-semibold ${filter === f ? "bg-brand text-white" : "bg-slate-100 text-slate-600"}`}>{f.replaceAll("_", " ")}</button>)}</div>
-        {visible.length ? <><div className="space-y-3">{visible.map((n) => <div key={n.id} onClick={() => handleNotificationClick(n)} className={`rounded-md border p-4 cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><NotificationMeta notification={n} /><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={(e) => { e.stopPropagation(); markRead(n.id); }}>Mark read</Button>}</div></div>)}</div><div className="mt-5 flex items-center justify-between border-t pt-4 text-sm"><span>Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length}</span><div className="flex gap-2"><Button variant="ghost" disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>Previous</Button><span className="px-2 py-2">{safePage} / {totalPages}</span><Button variant="ghost" disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)}>Next</Button></div></div></> : <Empty text="No internal updates found" />}
+        {visible.length ? <><div className="space-y-3">{visible.map((n) => <div key={n.id} onClick={() => handleNotificationClick(n)} className={`rounded-md border p-4 cursor-pointer transition hover:-translate-y-0.5 hover:shadow-md ${n.type === "LOW_STOCK" ? "border-yellow-200 bg-yellow-50" : n.type === "PAYMENT" ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white"}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap gap-2"><NotificationBadge value={n.isRead ? "Read" : "Unread"} />{["LOW_STOCK", "PAYMENT", "SALES_UPDATE"].includes(n.type) && <NotificationBadge value={n.type} />}</div><p className="mt-2 font-semibold text-slate-900">{n.title}</p><p className="mt-1 text-sm leading-6 text-slate-600">{n.message}</p><NotificationMeta notification={n} /><p className="mt-2 text-xs text-slate-500">{new Date(n.createdAt).toLocaleString()}</p></div>{!n.isRead && <Button variant="ghost" onClick={(e) => { e.stopPropagation(); markRead(n.id); }}>Mark read</Button>}</div></div>)}</div><div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between text-sm"><span className="text-xs sm:text-sm font-medium text-slate-600 text-center sm:text-left">Showing {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} of {filtered.length}</span><div className="flex flex-wrap items-center justify-center sm:justify-end gap-2"><Button variant="ghost" size="sm" disabled={safePage === 1} onClick={() => setPage(safePage - 1)} className="px-3 py-1.5 text-xs sm:text-sm">Previous</Button><span className="rounded-md bg-slate-100 px-3 py-1.5 text-xs sm:text-sm font-semibold text-slate-700">{safePage} / {totalPages}</span><Button variant="ghost" size="sm" disabled={safePage === totalPages} onClick={() => setPage(safePage + 1)} className="px-3 py-1.5 text-xs sm:text-sm">Next</Button></div></div></> : <Empty text="No internal updates found" />}
       </Section>
     );
   }
@@ -1666,8 +1666,7 @@ import { useChatSocket } from "../utils/useSocket";
     const moneyKeys = ["revenue", "paidAmount", "unpaidAmount", "totalRevenue", "pendingPayment", "creditOutstanding", "outstandingBalance"];
     const statValue = (key, value) => moneyKeys.some((item) => key.toLowerCase().includes(item.toLowerCase())) ? formatMoney(value) : value;
     return (
-      <div className="space-y-6">
-        <div className="flex justify-end"><Button variant="ghost" onClick={() => load(true)} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh</Button></div>
+      <div className="space-y-4 sm:space-y-5">
         {!['dashboard', 'dealers', 'products', 'orders', 'delivery', 'finance', 'credit'].includes(type) && statRows.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {statRows.map(([key, value]) => <Card key={key} label={key.replace(/([A-Z])/g, " $1")} value={statValue(key, value)} />)}
@@ -1752,71 +1751,177 @@ import { useChatSocket } from "../utils/useSocket";
     const [form, setForm] = useState({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
     const [selectedManager, setSelectedManager] = useState(null);
     const [editingManager, setEditingManager] = useState(null);
+    const [deletingManager, setDeletingManager] = useState(null);
+    const [formErrors, setFormErrors] = useState({});
+    const [formError, setFormError] = useState("");
+    const [formSuccess, setFormSuccess] = useState("");
     const [creating, setCreating] = useState(false);
     const [savingEdit, setSavingEdit] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+
     const load = (force = false) => cachedGet(api, "/admin-ceo/managers", {}, { force }).then(({ data }) => setRows(data));
     useEffect(() => { load(); }, []);
-    const createManager = async (e) => {
-      e.preventDefault();
-      if (form.password !== form.confirmPassword) {
-        return window.alert("Passwords do not match");
+
+    const validateCreate = () => {
+      const errs = {};
+      if (!String(form.name || "").trim()) errs.name = "Manager name is required";
+      if (!String(form.email || "").trim()) {
+        errs.email = "Email is required";
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+        errs.email = "Enter a valid email address";
       }
+      if (!form.phone || !String(form.phone).trim()) {
+        errs.phone = "Phone number is required";
+      } else if (!/^\d{10}$/.test(form.phone)) {
+        errs.phone = "Phone must be exactly 10 digits";
+      }
+      if (!form.password) {
+        errs.password = "Password is required";
+      } else if (form.password.length < 6) {
+        errs.password = "Password must be at least 6 characters";
+      }
+      if (!form.confirmPassword) {
+        errs.confirmPassword = "Confirm password is required";
+      } else if (form.password !== form.confirmPassword) {
+        errs.confirmPassword = "Passwords do not match";
+      }
+      setFormErrors(errs);
+      return Object.keys(errs).length === 0;
+    };
+
+    const createManager = async (e) => {
+      e?.preventDefault();
+      setFormError("");
+      setFormSuccess("");
+      if (!validateCreate()) return;
       setCreating(true);
       try {
         await api.post("/admin-ceo/managers", form);
         setForm({ name: "", email: "", phone: "", password: "", confirmPassword: "", role: "DEALER_MANAGER" });
-        load(true);
+        setFormErrors({});
+        setFormSuccess("Manager created successfully!");
+        setTimeout(() => setFormSuccess(""), 4000);
+        await load(true);
       } catch (error) {
-        window.alert(error.response?.data?.message || "Unable to create manager");
+        setFormError(error.response?.data?.message || "Unable to create manager");
       } finally {
         setCreating(false);
       }
     };
+
     const setStatus = async (id, status) => {
-      await api.patch(`/admin-ceo/managers/${id}/status`, { status });
-      load(true);
+      try {
+        await api.patch(`/admin-ceo/managers/${id}/status`, { status });
+        await load(true);
+      } catch (err) {
+        setFormError(err.response?.data?.message || "Failed to update status");
+      }
     };
-    const editManager = async (manager) => {
+
+    const editManager = (manager) => {
       setEditingManager({ ...manager });
     };
+
     const saveEdit = async (e) => {
-      e.preventDefault();
+      e?.preventDefault();
+      if (!String(editingManager.name || "").trim()) {
+        alert("Name is required");
+        return;
+      }
+      if (editingManager.phone && !/^\d{10}$/.test(editingManager.phone)) {
+        alert("Phone must be exactly 10 digits");
+        return;
+      }
       setSavingEdit(true);
       try {
         await api.put(`/admin-ceo/managers/${editingManager.id}`, { name: editingManager.name, phone: editingManager.phone, role: editingManager.role });
         setEditingManager(null);
-        load(true);
+        await load(true);
       } catch (err) {
-        window.alert(err.response?.data?.message || "Failed to update manager");
+        alert(err.response?.data?.message || "Failed to update manager");
       } finally {
         setSavingEdit(false);
       }
     };
-    const removeManager = async (manager) => {
-      if (!window.confirm(`Permanently delete ${manager.name} from the database? This action cannot be undone.`)) return;
-      await api.delete(`/admin-ceo/managers/${manager.id}`);
-      load(true);
+
+    const confirmDeleteManager = async () => {
+      if (!deletingManager) return;
+      setDeleting(true);
+      try {
+        await api.delete(`/admin-ceo/managers/${deletingManager.id}`);
+        setDeletingManager(null);
+        await load(true);
+      } catch (err) {
+        setFormError(err.response?.data?.message || "Failed to delete manager");
+      } finally {
+        setDeleting(false);
+      }
     };
+
     return (
       <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
         <Section title="Create Admin Manager">
-          <FormGrid onSubmit={createManager}>
-            <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-            <TextField label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-            <TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, '') })} required />
-            <TextField label="Password" type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required suffix={<button type="button" onClick={() => setShowPassword(!showPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
-            <TextField label="Confirm Password" type={showConfirmPassword ? "text" : "password"} value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} required suffix={<button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
-            <label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label>
-            <div className="md:col-span-2"><Button type="submit" disabled={creating}>{creating ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />} {creating ? "Creating Manager..." : "Create Manager"}</Button></div>
+          {formError && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{formError}</div>}
+          {formSuccess && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700">{formSuccess}</div>}
+          <FormGrid onSubmit={createManager} noValidate>
+            <div>
+              <TextField label="Name" value={form.name} onChange={(e) => { setForm({ ...form, name: e.target.value }); if (formErrors.name) setFormErrors({ ...formErrors, name: "" }); }} placeholder="Manager full name" />
+              {formErrors.name && <p className="mt-1 text-xs font-semibold text-rose-600">{formErrors.name}</p>}
+            </div>
+            <div>
+              <TextField label="Email" type="email" value={form.email} onChange={(e) => { setForm({ ...form, email: e.target.value }); if (formErrors.email) setFormErrors({ ...formErrors, email: "" }); }} placeholder="manager@company.com" />
+              {formErrors.email && <p className="mt-1 text-xs font-semibold text-rose-600">{formErrors.email}</p>}
+            </div>
+            <div>
+              <TextField label="Phone" type="tel" maxLength={10} value={form.phone} onChange={(e) => { setForm({ ...form, phone: e.target.value.replace(/\D/g, '') }); if (formErrors.phone) setFormErrors({ ...formErrors, phone: "" }); }} placeholder="10-digit phone number" />
+              {formErrors.phone && <p className="mt-1 text-xs font-semibold text-rose-600">{formErrors.phone}</p>}
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label>
+            </div>
+            <div>
+              <TextField label="Password" type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => { setForm({ ...form, password: e.target.value }); if (formErrors.password) setFormErrors({ ...formErrors, password: "" }); }} placeholder="Minimum 6 characters" suffix={<button type="button" onClick={() => setShowPassword(!showPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
+              {formErrors.password && <p className="mt-1 text-xs font-semibold text-rose-600">{formErrors.password}</p>}
+            </div>
+            <div>
+              <TextField label="Confirm Password" type={showConfirmPassword ? "text" : "password"} value={form.confirmPassword} onChange={(e) => { setForm({ ...form, confirmPassword: e.target.value }); if (formErrors.confirmPassword) setFormErrors({ ...formErrors, confirmPassword: "" }); }} placeholder="Re-enter password" suffix={<button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="text-slate-400 hover:text-slate-600 focus:outline-none">{showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>} />
+              {formErrors.confirmPassword && <p className="mt-1 text-xs font-semibold text-rose-600">{formErrors.confirmPassword}</p>}
+            </div>
+            <div className="md:col-span-2 pt-2"><Button type="submit" disabled={creating} className="relative z-10 cursor-pointer w-full sm:w-auto">{creating ? <RefreshCw size={16} className="animate-spin" /> : <Plus size={16} />} {creating ? "Creating Manager..." : "Create Manager"}</Button></div>
           </FormGrid>
         </Section>
         <Section title="Organization Managers">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Name", "Role", "Status", "Actions"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="p-3"><button type="button" className="font-semibold text-indigo-700 hover:underline" onClick={() => setSelectedManager(row)}>{row.name}</button></td><td><StatusBadge value={row.role} /></td><td><button type="button" aria-label={`Set ${row.name} ${row.status === "active" ? "inactive" : "active"}`} onClick={() => setStatus(row.id, row.status === "active" ? "inactive" : "active")}><StatusBadge value={row.status} /></button></td><td><div className="flex flex-nowrap gap-2"><button type="button" title="Edit manager" aria-label={`Edit ${row.name}`} className="rounded-md border border-indigo-200 p-2 text-indigo-700 hover:bg-indigo-50" onClick={() => editManager(row)}><Pencil size={16} /></button><button type="button" title="Delete manager" aria-label={`Delete ${row.name}`} className="rounded-md border border-rose-200 p-2 text-rose-700 hover:bg-rose-50" onClick={() => removeManager(row)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table>
+            <table className="w-full text-left text-sm"><thead className="bg-slate-50 text-slate-500"><tr>{["Name", "Role", "Status", "Actions"].map((h) => <th key={h} className="p-3">{h}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id} className="border-t border-slate-100"><td className="p-3"><button type="button" className="font-semibold text-indigo-700 hover:underline cursor-pointer" onClick={() => setSelectedManager(row)}>{row.name}</button></td><td><StatusBadge value={row.role} /></td><td><button type="button" className="cursor-pointer" aria-label={`Set ${row.name} ${row.status === "active" ? "inactive" : "active"}`} onClick={() => setStatus(row.id, row.status === "active" ? "inactive" : "active")}><StatusBadge value={row.status} /></button></td><td><div className="flex flex-nowrap gap-2 relative z-10"><button type="button" title="Edit manager" aria-label={`Edit ${row.name}`} className="relative z-10 cursor-pointer rounded-md border border-indigo-200 p-2 text-indigo-700 hover:bg-indigo-50 active:scale-95 transition" onClick={() => editManager(row)}><Pencil size={16} /></button><button type="button" title="Delete manager" aria-label={`Delete ${row.name}`} className="relative z-10 cursor-pointer rounded-md border border-rose-200 p-2 text-rose-700 hover:bg-rose-50 active:scale-95 transition" onClick={() => setDeletingManager(row)}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table>
+            {!rows.length && <div className="p-6 text-center text-sm text-slate-400">No managers created yet.</div>}
           </div>
         </Section>
-        {selectedManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setSelectedManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-details-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-details-title" className="text-xl font-bold text-slate-950">{selectedManager.name}</h2><p className="mt-1 text-sm text-slate-500">Complete Manager Details</p></div><button type="button" aria-label="Close manager details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setSelectedManager(null)}><X size={18} /></button></div><dl className="mt-6 grid gap-4 sm:grid-cols-2">{[["Email", selectedManager.email], ["Phone", selectedManager.phone || "-"], ["Role", String(selectedManager.role || "-").replaceAll("_", " ")], ["Status", selectedManager.status], ["Created", formatDate(selectedManager.createdAt)]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm font-semibold capitalize text-slate-900">{value}</dd></div>)}</dl></div></div>}
-        {editingManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setEditingManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-edit-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-edit-title" className="text-xl font-bold text-slate-950">Edit {editingManager.name}</h2><p className="mt-1 text-sm text-slate-500">Update Manager Details</p></div><button type="button" aria-label="Close edit manager" className="rounded-md p-2 text-slate-500 hover:bg-slate-100" onClick={() => setEditingManager(null)}><X size={18} /></button></div><form onSubmit={saveEdit} className="mt-6 space-y-4"><TextField label="Name" value={editingManager.name} onChange={(e) => setEditingManager({ ...editingManager, name: e.target.value })} required /><TextField label="Phone" type="tel" pattern="\d{10}" title="Phone must be exactly 10 digits" maxLength={10} minLength={10} value={editingManager.phone || ""} onChange={(e) => setEditingManager({ ...editingManager, phone: e.target.value.replace(/\D/g, '') })} required /><label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={editingManager.role} onChange={(e) => setEditingManager({ ...editingManager, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label><div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => setEditingManager(null)}>Cancel</Button><Button type="submit" disabled={savingEdit}>{savingEdit ? <RefreshCw size={16} className="animate-spin" /> : null} {savingEdit ? "Saving Changes..." : "Save Changes"}</Button></div></form></div></div>}
+        {selectedManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setSelectedManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-details-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-details-title" className="text-xl font-bold text-slate-950">{selectedManager.name}</h2><p className="mt-1 text-sm text-slate-500">Complete Manager Details</p></div><button type="button" aria-label="Close manager details" className="rounded-md p-2 text-slate-500 hover:bg-slate-100 cursor-pointer" onClick={() => setSelectedManager(null)}><X size={18} /></button></div><dl className="mt-6 grid gap-4 sm:grid-cols-2">{[["Email", selectedManager.email], ["Phone", selectedManager.phone || "-"], ["Role", String(selectedManager.role || "-").replaceAll("_", " ")], ["Status", selectedManager.status], ["Created", formatDate(selectedManager.createdAt)]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><dt className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</dt><dd className="mt-1 break-words text-sm font-semibold capitalize text-slate-900">{value}</dd></div>)}</dl></div></div>}
+        {editingManager && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setEditingManager(null)}><div role="dialog" aria-modal="true" aria-labelledby="manager-edit-title" className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}><div className="flex items-start justify-between gap-4"><div><h2 id="manager-edit-title" className="text-xl font-bold text-slate-950">Edit {editingManager.name}</h2><p className="mt-1 text-sm text-slate-500">Update Manager Details</p></div><button type="button" aria-label="Close edit manager" className="rounded-md p-2 text-slate-500 hover:bg-slate-100 cursor-pointer" onClick={() => setEditingManager(null)}><X size={18} /></button></div><form onSubmit={saveEdit} className="mt-6 space-y-4"><TextField label="Name" value={editingManager.name} onChange={(e) => setEditingManager({ ...editingManager, name: e.target.value })} required /><TextField label="Phone" type="tel" maxLength={10} value={editingManager.phone || ""} onChange={(e) => setEditingManager({ ...editingManager, phone: e.target.value.replace(/\D/g, '') })} placeholder="10-digit phone number" /><label className="text-sm font-semibold text-slate-600">Role<select className="mt-1 w-full rounded-md border border-slate-200 p-2.5" value={editingManager.role} onChange={(e) => setEditingManager({ ...editingManager, role: e.target.value })}><option value="DEALER_MANAGER">Dealer Manager</option><option value="PRODUCT_DELIVERY_MANAGER">Product Delivery Manager</option><option value="FINANCE_MANAGER">Finance Manager</option></select></label><div className="mt-6 flex justify-end gap-3"><Button type="button" variant="secondary" className="bg-slate-100 text-slate-700 hover:bg-slate-200 cursor-pointer" onClick={() => setEditingManager(null)}>Cancel</Button><Button type="submit" disabled={savingEdit} className="cursor-pointer">{savingEdit ? <RefreshCw size={16} className="animate-spin" /> : null} {savingEdit ? "Saving Changes..." : "Save Changes"}</Button></div></form></div></div>}
+        {deletingManager && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4" onMouseDown={() => setDeletingManager(null)}>
+            <div role="dialog" aria-modal="true" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-rose-100 text-rose-600">
+                  <Trash2 size={20} />
+                </span>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-950">Delete Manager</h2>
+                  <p className="text-xs text-slate-500">This action cannot be undone.</p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm text-slate-600">
+                Are you sure you want to permanently delete <strong className="text-slate-900">{deletingManager.name}</strong> from the database?
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <Button type="button" variant="ghost" onClick={() => setDeletingManager(null)} className="cursor-pointer">Cancel</Button>
+                <Button type="button" variant="danger" disabled={deleting} onClick={confirmDeleteManager} className="cursor-pointer">
+                  {deleting ? "Deleting..." : "Delete Manager"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
